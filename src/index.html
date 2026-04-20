@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // Resolve the stored theme choice and set data-theme BEFORE the
+      // stylesheet paints, to avoid a flash of wrong theme on launch.
+      (function () {
+        try {
+          var choice = localStorage.getItem("theme") || "system";
+          var effective = choice === "system"
+            ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+            : choice;
+          document.documentElement.setAttribute("data-theme", effective);
+        } catch (_) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/lib/xterm.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vtests-gui</title>
+    <script type="importmap">
+    {
+      "imports": {
+        "@tauri-apps/api/core": "/lib/tauri/api/core.js",
+        "@tauri-apps/api/event": "/lib/tauri/api/event.js",
+        "@tauri-apps/api/webview": "/lib/tauri/api/webview.js",
+        "@tauri-apps/api/window": "/lib/tauri/api/window.js",
+        "@tauri-apps/api/dpi": "/lib/tauri/api/dpi.js",
+        "@tauri-apps/plugin-dialog": "/lib/tauri/plugin-dialog.js"
+      }
+    }
+    </script>
+    <script type="module" src="/main.js"></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button id="btn-reset-window">Reset window geometry</button>
+          <label class="theme-label">
+            Theme:
+            <select id="theme-select">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-reset" class="btn-danger">Reset all fields</button>
+      </div>
+
+      <div class="drop-zones">
+        <div class="drop-zone" id="drop-reference" role="button" tabindex="0" aria-label="Set reference build executable">
+          <span class="drop-label">Reference build</span>
+          <span class="drop-hint">Drop MuseScore Studio executable here, or click to browse</span>
+          <span class="file-name" id="file-reference"></span>
+          <span class="version-info" id="version-reference"></span>
+        </div>
+        <div class="drop-zone" id="drop-current" role="button" tabindex="0" aria-label="Set current build executable">
+          <span class="drop-label">Current build</span>
+          <span class="drop-hint">Drop MuseScore Studio executable here, or click to browse</span>
+          <span class="file-name" id="file-current"></span>
+          <span class="version-info" id="version-current"></span>
+        </div>
+      </div>
+
+      <div class="workdir-section">
+        <div class="danger-box">
+          <table class="workdir-table">
+            <tr>
+              <td><button class="btn-info" data-info="workdir" aria-label="Help: working directory">?</button></td>
+              <td class="workdir-label">Working directory:</td>
+              <td id="workdir-path" class="workdir-path"></td>
+              <td><button id="btn-workdir">Change...</button></td>
+            </tr>
+          </table>
+          <p class="warning">&#9888; WARNING: Existing contents of the working directory may be permanently deleted at the start of each run.</p>
+        </div>
+        <div class="neutral-box">
+          <table class="workdir-table">
+            <tr>
+              <td><button class="btn-info" data-info="vtests" aria-label="Help: vtests directory">?</button></td>
+              <td class="workdir-label">vtests directory:</td>
+              <td id="vtests-path" class="workdir-path"></td>
+              <td><button id="btn-vtests">Change...</button></td>
+            </tr>
+            <tr>
+              <td><button class="btn-info" data-info="testfiles" aria-label="Help: test files directory">?</button></td>
+              <td class="workdir-label">Test files directory:</td>
+              <td id="testfiles-path" class="workdir-path"></td>
+              <td><button id="btn-testfiles">Change...</button></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      <div class="actions-row">
+        <button id="btn-gen-reference" class="btn-secondary">Generate reference</button>
+        <button id="btn-gen-current" class="btn-secondary">Generate current</button>
+        <button id="btn-gen-all" class="btn-primary">Generate all</button>
+        <div class="actions-separator"></div>
+        <button id="btn-compare" class="btn-secondary">Compare</button>
+        <div class="actions-separator"></div>
+        <button id="btn-gen-all-compare" class="btn-primary">Generate all and compare</button>
+      </div>
+      <div class="options-row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="chk-open-browser" />
+          Open diff in browser after compare
+        </label>
+        <button id="btn-open-browser" class="btn-secondary" disabled>Open diff in browser</button>
+      </div>
+
+      <div class="terminal-section">
+        <div id="terminal"></div>
+      </div>
+      <div class="cancel-row">
+        <button id="btn-cancel" class="btn-danger-solid" disabled>Stop</button>
+      </div>
+    </main>
+  </body>
+</html>
