@@ -283,11 +283,14 @@ button:focus-visible {
   gap: 0.5rem;
 }
 
+.actions-row #btn-compare {
+  margin-left: auto;
+}
+
 .options-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
 .checkbox-label {
@@ -300,20 +303,6 @@ button:focus-visible {
 
 .checkbox-label input[type="checkbox"] {
   accent-color: #396cd8;
-}
-
-.actions-separator {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.actions-separator::after {
-  content: '';
-  width: 1px;
-  height: 1.8rem;
-  background-color: #ccc;
 }
 
 .btn-danger {
@@ -442,10 +431,6 @@ button:focus-visible {
   background-color: rgba(255, 255, 255, 0.07);
 }
 
-:root[data-theme="dark"] .actions-separator::after {
-  background-color: #555;
-}
-
 :root[data-theme="dark"] {
   color: #f6f6f6;
   background-color: #2f2f2f;
@@ -562,4 +547,96 @@ button:focus-visible {
   background-color: #1a1a1a;
   color: #f0f0f0;
   border: 1px solid #555;
+}
+
+.split-button {
+  position: relative;
+  display: inline-flex;
+  border-radius: 8px;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+}
+
+.split-button > button {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.split-button > .split-button-main {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  /* Inset shadow for the divider survives hover/active border-color changes. */
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.split-button > .split-button-toggle {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  padding-left: 0.75em;
+  padding-right: 0.75em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85em;
+}
+
+.split-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  padding: 0.3rem;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  display: none;
+  flex-direction: column;
+  gap: 0.1rem;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+.split-menu.open {
+  display: flex;
+}
+
+.split-menu-item {
+  background-color: transparent;
+  color: #0f0f0f;
+  border: 1px solid transparent;
+  box-shadow: none;
+  border-radius: 4px;
+  padding: 0.45em 0.9em;
+  text-align: left;
+  font-size: 0.9em;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.split-menu-item:hover:not(:disabled) {
+  background-color: rgba(57, 108, 216, 0.12);
+  border-color: transparent;
+}
+
+.split-menu-item:active {
+  background-color: rgba(57, 108, 216, 0.2) !important;
+}
+
+:root[data-theme="dark"] .split-menu {
+  background-color: #2a2a2a;
+  border-color: #555;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="dark"] .split-menu-item {
+  background-color: transparent;
+  color: #f6f6f6;
+}
+
+:root[data-theme="dark"] .split-menu-item:hover:not(:disabled) {
+  background-color: rgba(107, 155, 239, 0.18);
+}
+
+:root[data-theme="dark"] .split-menu-item:active {
+  background-color: rgba(107, 155, 239, 0.25) !important;
 }

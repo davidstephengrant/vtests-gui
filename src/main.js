@@ -24,6 +24,8 @@ const STORE_KEY_WORKDIR = "workdir";
 const STORE_KEY_VTESTS = "vtests-dir";
 const STORE_KEY_TESTFILES = "testfiles-dir";
 const STORE_KEY_OPEN_BROWSER = "open-browser-after-compare";
+const STORE_KEY_COMPARE_AFTER = "compare-after-generate";
+const STORE_KEY_ACTION = "generate-action";
 const STORE_KEY_THEME = "theme";
 
 const SCRIPT_GENERATE = "vtest-generate-pngs.sh";
@@ -99,11 +101,17 @@ async function updateActionButtons() {
 
   if (myGen !== updateActionButtonsGen) return;
 
-  document.getElementById("btn-gen-reference").disabled = !(dirsSet && hasReference);
-  document.getElementById("btn-gen-current").disabled = !(dirsSet && hasCurrent);
-  document.getElementById("btn-gen-all").disabled = !(dirsSet && hasBoth);
+  const canRun = {
+    "gen-reference": dirsSet && hasReference,
+    "gen-current": dirsSet && hasCurrent,
+    "gen-all": dirsSet && hasBoth,
+  };
+  for (const item of document.querySelectorAll("#split-generate-menu .split-menu-item")) {
+    item.disabled = !canRun[item.dataset.action];
+  }
+  const splitMain = document.getElementById("split-generate-main");
+  splitMain.disabled = !canRun[splitMain.dataset.action];
   document.getElementById("btn-compare").disabled = !(canCompare && dirsSet);
-  document.getElementById("btn-gen-all-compare").disabled = !(dirsSet && hasBoth);
   document.getElementById("btn-open-browser").disabled = !hasDiffReport;
 }
 
@@ -119,7 +127,7 @@ function disableAllButtons() {
 
 async function reenableAllButtons() {
   document.getElementById("btn-cancel").disabled = true;
-  for (const id of ["btn-workdir", "btn-vtests", "btn-testfiles"])
+  for (const id of ["btn-workdir", "btn-vtests", "btn-testfiles", "split-generate-toggle"])
     document.getElementById(id).disabled = false;
   updateResetButton(document.getElementById("btn-reset"));
   await updateActionButtons();
@@ -344,8 +352,8 @@ function initTerminal() {
 
 const INFO_TEXT = {
   workdir:   "The working directory is where vtests writes its output files during a test run.\n\nExisting contents may be permanently deleted at the start of each run.",
-  vtests:    "The directory containing the vtests scripts (typically the vtests folder inside a MuseScore repository clone, e.g. MuseScore/vtests).",
-  testfiles: "The directory containing the MuseScore Studio project files that vtests uses when generating and comparing results.",
+  vtests:    "The directory containing the vtest scripts (typically the vtest folder inside a MuseScore repository clone, e.g. MuseScore/vtest).",
+  testfiles: "The directory containing the MuseScore Studio test scores that vtests uses when generating and comparing results.",
 };
 
 async function validateVtestsDir(dirPath, pathEl, term) {
@@ -357,12 +365,12 @@ async function validateVtestsDir(dirPath, pathEl, term) {
     );
     missing = scripts.filter((_, i) => !results[i]);
   } catch (e) {
-    term.write(`\r\n\x1b[31mError validating vtests directory: ${e?.message ?? e}\x1b[0m\r\n`);
+    term.write(`\r\n\x1b[31mError validating vtest directory: ${e?.message ?? e}\x1b[0m\r\n`);
     return;
   }
   if (missing.length > 0) {
-    const tooltipMsg = "The selected vtests directory does not appear to be valid.";
-    const termMsg = `The selected vtests directory does not appear to be valid (could not find: ${missing.join(", ")}).`;
+    const tooltipMsg = "The selected vtest directory does not appear to be valid.";
+    const termMsg = `The selected vtest directory does not appear to be valid (could not find: ${missing.join(", ")}).`;
     pathEl.classList.add("path-invalid");
     pathEl.dataset.warning = tooltipMsg;
     term.write(`\r\n\x1b[33mWarning: ${termMsg}\x1b[0m\r\n`);
@@ -378,7 +386,7 @@ async function preflightBash(term) {
   const hasBash = await invoke("command_exists", { name: "bash" });
   if (!hasBash) {
     term.write(
-      "\x1b[31mWarning: bash was not found on PATH. The vtests scripts " +
+      "\x1b[31mWarning: bash was not found on PATH. The vtest scripts " +
       "require bash plus standard Unix tools (imagemagick, coreutils). " +
       "Install Git Bash or enable WSL to proceed.\x1b[0m\r\n\n"
     );
@@ -470,7 +478,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     const vp = document.getElementById("vtests-path");
     vp.classList.remove("path-invalid");
     delete vp.dataset.warning;
+    document.getElementById("chk-compare-after").checked = true;
     document.getElementById("chk-open-browser").checked = true;
+    const splitMain = document.getElementById("split-generate-main");
+    splitMain.textContent = "Generate all";
+    splitMain.dataset.action = "gen-all";
     updateResetButton(btnReset);
     updateActionButtons();
   });
@@ -643,35 +655,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     return code;
   }
 
-  document.getElementById("btn-gen-reference").addEventListener("click", () =>
-    runWithUi(0, generateReference),
-  );
-
-  document.getElementById("btn-gen-current").addEventListener("click", () =>
-    runWithUi(0, generateCurrent),
-  );
-
-  document.getElementById("btn-gen-all").addEventListener("click", () =>
-    runWithUi(1, async () => {
-      const code = await generateReference();
-      if (cancelled || code !== 0) return;
-      await generateCurrent();
-    }),
-  );
-
   document.getElementById("btn-compare").addEventListener("click", () =>
     runWithUi(0, compare),
   );
 
-  document.getElementById("btn-gen-all-compare").addEventListener("click", () =>
-    runWithUi(2, async () => {
-      const refCode = await generateReference();
-      if (cancelled || refCode !== 0) return;
-      const curCode = await generateCurrent();
-      if (cancelled || curCode !== 0) return;
-      await compare();
-    }),
-  );
+  const chkCompareAfter = document.getElementById("chk-compare-after");
+  chkCompareAfter.checked = localStorage.getItem(STORE_KEY_COMPARE_AFTER) !== "false";
+  chkCompareAfter.addEventListener("change", () => {
+    localStorage.setItem(STORE_KEY_COMPARE_AFTER, chkCompareAfter.checked);
+  });
 
   const chkOpenBrowser = document.getElementById("chk-open-browser");
   chkOpenBrowser.checked = localStorage.getItem(STORE_KEY_OPEN_BROWSER) !== "false";
@@ -683,4 +675,106 @@ window.addEventListener("DOMContentLoaded", async () => {
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
     await invoke("open_path", { path: joinPath(workdir, "diff", "vtest_compare.html") });
   });
+
+  // ---- Generate split-button ----
+  const splitRoot = document.getElementById("split-button-generate");
+  const splitMain = document.getElementById("split-generate-main");
+  const splitToggle = document.getElementById("split-generate-toggle");
+  const splitMenu = document.getElementById("split-generate-menu");
+
+  function closeSplitMenu() {
+    splitMenu.classList.remove("open");
+    splitToggle.setAttribute("aria-expanded", "false");
+  }
+
+  function openSplitMenu() {
+    splitMenu.classList.add("open");
+    splitToggle.setAttribute("aria-expanded", "true");
+    splitMenu.querySelector(".split-menu-item:not(:disabled)")?.focus();
+  }
+
+  // Restore previously-selected action so the button's text and data-action
+  // match what the user last picked.
+  const storedAction = localStorage.getItem(STORE_KEY_ACTION);
+  if (storedAction) {
+    const storedItem = splitMenu.querySelector(
+      `.split-menu-item[data-action="${storedAction}"]`,
+    );
+    if (storedItem) {
+      splitMain.textContent = storedItem.textContent.trim();
+      splitMain.dataset.action = storedAction;
+    }
+  }
+
+  splitMain.addEventListener("click", () => {
+    const action = splitMain.dataset.action;
+    const withCompare = chkCompareAfter.checked;
+    // Count the commands that will run so terminal-done suppression only hides
+    // the intermediate [process exited] lines; the final step shows its status
+    // (compare handles its own line via suppressNextExitLine).
+    const genSteps = action === "gen-all" ? 2 : 1;
+    const suppressCount = genSteps + (withCompare ? 1 : 0) - 1;
+    runWithUi(suppressCount, async () => {
+      if (action === "gen-reference") {
+        const code = await generateReference();
+        if (cancelled || code !== 0) return;
+      } else if (action === "gen-current") {
+        const code = await generateCurrent();
+        if (cancelled || code !== 0) return;
+      } else if (action === "gen-all") {
+        const refCode = await generateReference();
+        if (cancelled || refCode !== 0) return;
+        const curCode = await generateCurrent();
+        if (cancelled || curCode !== 0) return;
+      } else {
+        return;
+      }
+      if (withCompare) await compare();
+    });
+  });
+
+  splitToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (splitMenu.classList.contains("open")) closeSplitMenu();
+    else openSplitMenu();
+  });
+
+  splitMenu.addEventListener("click", (e) => {
+    const item = e.target.closest(".split-menu-item");
+    if (!item || item.disabled) return;
+    splitMain.textContent = item.textContent.trim();
+    splitMain.dataset.action = item.dataset.action;
+    localStorage.setItem(STORE_KEY_ACTION, item.dataset.action);
+    closeSplitMenu();
+    splitMain.focus();
+    updateActionButtons();
+  });
+
+  splitMenu.addEventListener("keydown", (e) => {
+    const items = [...splitMenu.querySelectorAll(".split-menu-item")];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      items[(idx + 1) % items.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(idx - 1 + items.length) % items.length]?.focus();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (splitMenu.classList.contains("open") && !splitRoot.contains(e.target)) closeSplitMenu();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && splitMenu.classList.contains("open")) {
+      closeSplitMenu();
+      splitToggle.focus();
+    }
+  });
+
+  // The initial updateActionButtons() above ran before we restored the split
+  // button's selected action, so the main button's disabled state was keyed to
+  // the HTML default. Recompute now that the real action is in place.
+  updateActionButtons();
 });
