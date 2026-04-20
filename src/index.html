@@ -81,14 +81,14 @@
         <div class="neutral-box">
           <table class="workdir-table">
             <tr>
-              <td><button class="btn-info" data-info="vtests" aria-label="Help: vtests directory">?</button></td>
-              <td class="workdir-label">vtests directory:</td>
+              <td><button class="btn-info" data-info="vtests" aria-label="Help: vtest directory">?</button></td>
+              <td class="workdir-label">vtest directory:</td>
               <td id="vtests-path" class="workdir-path"></td>
               <td><button id="btn-vtests">Change...</button></td>
             </tr>
             <tr>
-              <td><button class="btn-info" data-info="testfiles" aria-label="Help: test files directory">?</button></td>
-              <td class="workdir-label">Test files directory:</td>
+              <td><button class="btn-info" data-info="testfiles" aria-label="Help: test scores directory">?</button></td>
+              <td class="workdir-label">Test scores directory:</td>
               <td id="testfiles-path" class="workdir-path"></td>
               <td><button id="btn-testfiles">Change...</button></td>
             </tr>
@@ -96,20 +96,33 @@
         </div>
       </div>
       <div class="actions-row">
-        <button id="btn-gen-reference" class="btn-secondary">Generate reference</button>
-        <button id="btn-gen-current" class="btn-secondary">Generate current</button>
-        <button id="btn-gen-all" class="btn-primary">Generate all</button>
-        <div class="actions-separator"></div>
+        <div class="split-button" id="split-button-generate">
+          <button type="button" class="btn-primary split-button-main" id="split-generate-main" data-action="gen-all">
+            Generate all
+          </button>
+          <button type="button" class="btn-primary split-button-toggle" id="split-generate-toggle"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="split-generate-menu"
+                  aria-label="More generate options">
+            <span aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="split-menu" id="split-generate-menu" role="menu">
+            <button type="button" class="split-menu-item" role="menuitem" data-action="gen-reference">Generate reference</button>
+            <button type="button" class="split-menu-item" role="menuitem" data-action="gen-current">Generate current</button>
+            <button type="button" class="split-menu-item" role="menuitem" data-action="gen-all">Generate all</button>
+          </div>
+        </div>
         <button id="btn-compare" class="btn-secondary">Compare</button>
-        <div class="actions-separator"></div>
-        <button id="btn-gen-all-compare" class="btn-primary">Generate all and compare</button>
+        <button id="btn-open-browser" class="btn-secondary" disabled>Open diff in browser</button>
       </div>
       <div class="options-row">
         <label class="checkbox-label">
-          <input type="checkbox" id="chk-open-browser" />
-          Open diff in browser after compare
+          <input type="checkbox" id="chk-compare-after" />
+          Compare after generating
         </label>
-        <button id="btn-open-browser" class="btn-secondary" disabled>Open diff in browser</button>
+        <label class="checkbox-label">
+          <input type="checkbox" id="chk-open-browser" />
+          Open diff in browser after comparing
+        </label>
       </div>
 
       <div class="terminal-section">

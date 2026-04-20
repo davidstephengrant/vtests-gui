@@ -23,7 +23,7 @@ Developed with the assistance of [Claude Code](https://claude.com/claude-code), 
 
 ### Runtime (to use the app)
 
-- A clone of the [MuseScore repository](https://github.com/musescore/MuseScore) — the app runs the scripts from its `vtests/` directory.
+- A clone of the [MuseScore repository](https://github.com/musescore/MuseScore) — the app runs the scripts from its `vtest/` directory.
 - One or two MuseScore Studio builds to test (`.AppImage` on Linux, `.app` on macOS, `.exe` on Windows).
 - A directory of MuseScore project files to render.
 - **Windows only:** `bash` plus standard Unix tools (ImageMagick, coreutils) on `PATH`. Install [Git Bash](https://git-scm.com/download/win) or enable WSL.
@@ -64,8 +64,8 @@ Installers and binaries are written to `src-tauri/target/release/bundle/`.
 1. **Set the two MuseScore executables** by dropping them onto the *Reference build* and *Current build* zones, or clicking to browse.
 2. **Set the three directories:**
    - *Working directory* — where the app writes `ref/`, `current/`, and `diff/` subdirectories. **Existing contents may be deleted at the start of each run.**
-   - *vtests directory* — the `vtests/` folder inside your MuseScore repository clone.
-   - *Test files directory* — the folder containing the `.mscz` / `.mscx` files to render.
+   - *vtest directory* — the `vtest/` folder inside your MuseScore repository clone.
+   - *Test scores directory* — the folder containing the `.mscz` / `.mscx` files to render.
 3. **Generate and compare:**
    - *Generate reference* / *Generate current* — render one build's PNGs.
    - *Generate all* — render both in sequence.
