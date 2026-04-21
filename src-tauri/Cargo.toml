@@ -30,7 +30,6 @@ parking_lot = "0.12"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-pelite = "0.10"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [profile.release]
