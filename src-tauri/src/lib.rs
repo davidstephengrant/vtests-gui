@@ -49,6 +49,168 @@ fn set_executable(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TestfileRename {
+    from: String,
+    to: String,
+}
+
+#[derive(serde::Serialize)]
+struct RenameResult {
+    from: String,
+    to: String,
+    error: Option<String>,
+}
+
+fn is_valid_basename(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn sanitize_basename(name: &str) -> String {
+    // Collapse each run of invalid chars to a single underscore, so
+    // `My Score (v2).mscz` becomes `My_Score_v2_.mscz` rather than a string
+    // of underscores for every space, paren, and letter stripped out.
+    let mut out = String::with_capacity(name.len());
+    let mut in_run = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
+}
+
+fn make_unique(name: &str, taken: &std::collections::HashSet<String>) -> String {
+    if !taken.contains(name) {
+        return name.to_string();
+    }
+    // Suffix before the extension. Don't treat a leading dot as an extension
+    // separator so dotfiles like `.foo` aren't split into ("", ".foo").
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let mut n = 1u32;
+    loop {
+        let candidate = format!("{}_{}{}", stem, n, ext);
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+fn collect_files(
+    dir: &std::path::Path,
+    by_parent: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
+) -> std::io::Result<()> {
+    let mut files_here = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        // Skip symlinks so a loop or out-of-tree link can't fool the walker.
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if ft.is_dir() {
+            collect_files(&path, by_parent)?;
+        } else if ft.is_file() {
+            files_here.push(path);
+        }
+    }
+    if !files_here.is_empty() {
+        by_parent.insert(dir.to_path_buf(), files_here);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn scan_testfile_names(dir: &str) -> Result<Vec<TestfileRename>, String> {
+    let root = std::path::Path::new(dir);
+    if !root.is_dir() {
+        return Err(format!("not a directory: {}", dir));
+    }
+
+    let mut by_parent: std::collections::HashMap<
+        std::path::PathBuf,
+        Vec<std::path::PathBuf>,
+    > = std::collections::HashMap::new();
+    collect_files(root, &mut by_parent).map_err(|e| e.to_string())?;
+
+    let mut renames: Vec<TestfileRename> = Vec::new();
+    for (parent, files) in &by_parent {
+        // Seed `taken` with names we're NOT renaming (i.e. already valid),
+        // so suffixing can't collide with a file we're leaving alone.
+        let mut taken: std::collections::HashSet<String> = files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .filter(|n| is_valid_basename(n))
+            .map(String::from)
+            .collect();
+
+        let mut invalid: Vec<&std::path::PathBuf> = files
+            .iter()
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| !is_valid_basename(n))
+            })
+            .collect();
+        // Sort so the same dir always yields the same suffix assignment.
+        invalid.sort();
+
+        for file in invalid {
+            let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let sanitized = sanitize_basename(name);
+            let unique = make_unique(&sanitized, &taken);
+            taken.insert(unique.clone());
+            let to = parent.join(&unique);
+            renames.push(TestfileRename {
+                from: file.to_string_lossy().into_owned(),
+                to: to.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    renames.sort_by(|a, b| a.from.cmp(&b.from));
+    Ok(renames)
+}
+
+#[tauri::command]
+fn rename_testfiles(renames: Vec<TestfileRename>) -> Vec<RenameResult> {
+    renames
+        .into_iter()
+        .map(|r| {
+            let to_path = std::path::Path::new(&r.to);
+            // Last-resort guard: scan_testfile_names already suffixes to avoid
+            // collisions, but the FS state may have shifted since. Never
+            // overwrite an existing entry here.
+            let error = if to_path.exists() {
+                Some(format!("target already exists: {}", r.to))
+            } else {
+                std::fs::rename(&r.from, &r.to).err().map(|e| e.to_string())
+            };
+            RenameResult {
+                from: r.from,
+                to: r.to,
+                error,
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 fn prepare_output_dir(workdir: &str, subdir: &str) -> Result<(), String> {
     // The contract is encoded in the signature: callers pass the workdir and
@@ -384,7 +546,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, prepare_output_dir, run_command, cancel_command])
+        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

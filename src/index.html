@@ -88,7 +88,12 @@
               <td><button class="btn-info" data-info="testfiles" aria-label="Help: test scores directory">?</button></td>
               <td class="workdir-label">Test scores directory:</td>
               <td id="testfiles-path" class="workdir-path"></td>
-              <td><button id="btn-testfiles">Change...</button></td>
+              <td>
+                <div class="btn-group">
+                  <button id="btn-validate-testfiles" class="btn-danger" disabled>Validate filenames...</button>
+                  <button id="btn-testfiles">Change...</button>
+                </div>
+              </td>
             </tr>
           </table>
         </div>
@@ -130,5 +135,17 @@
         <button id="btn-cancel" class="btn-danger-solid" disabled>Stop</button>
       </div>
     </main>
+
+    <div class="modal-overlay" id="validate-modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="validate-title">
+        <h2 class="modal-title" id="validate-title">Rename invalid filenames</h2>
+        <p class="modal-summary" id="validate-summary"></p>
+        <div class="rename-list" id="rename-list"></div>
+        <div class="modal-actions">
+          <button id="btn-validate-cancel">Cancel</button>
+          <button id="btn-validate-confirm" class="btn-primary">Rename</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

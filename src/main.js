@@ -113,9 +113,18 @@ async function updateActionButtons() {
   splitMain.disabled = !canRun[splitMain.dataset.action];
   document.getElementById("btn-compare").disabled = !(canCompare && dirsSet);
   document.getElementById("btn-open-browser").disabled = !hasDiffReport;
+  document.getElementById("btn-validate-testfiles").disabled = !localStorage.getItem(STORE_KEY_TESTFILES);
 }
 
-const ALWAYS_ENABLED_BUTTON_IDS = new Set(["btn-cancel", "btn-reset-window"]);
+const ALWAYS_ENABLED_BUTTON_IDS = new Set([
+  "btn-cancel",
+  "btn-reset-window",
+  // Modal buttons live inside a hidden overlay during runs, so disabling
+  // them here just leaves them stuck disabled next time the modal opens —
+  // reenableAllButtons only re-enables a specific allowlist. Keep them out.
+  "btn-validate-cancel",
+  "btn-validate-confirm",
+]);
 
 function disableAllButtons() {
   document.querySelectorAll("button").forEach((btn) => {
@@ -366,6 +375,21 @@ async function validateVtestsDir(dirPath, pathEl, term) {
   updateActionButtons();
 }
 
+async function checkTestfileNames(dir, term) {
+  try {
+    const renames = await invoke("scan_testfile_names", { dir });
+    if (renames.length === 0) return;
+    const n = renames.length;
+    term.write(
+      `\r\n\x1b[33mWarning: ${n} file${n === 1 ? " has" : "s have"} invalid ` +
+      `name${n === 1 ? "" : "s"} in the test scores directory — vtest scripts ` +
+      `may fail on these. Click "Validate filenames..." to review and rename.\x1b[0m\r\n`
+    );
+  } catch (e) {
+    term.write(`\r\n\x1b[31mError scanning test scores directory: ${e?.message ?? e}\x1b[0m\r\n`);
+  }
+}
+
 async function preflightBash(term) {
   if (platform !== "windows") return;
   const hasBash = await invoke("command_exists", { name: "bash" });
@@ -376,6 +400,124 @@ async function preflightBash(term) {
       "Install Git Bash or enable WSL to proceed.\x1b[0m\r\n\n"
     );
   }
+}
+
+function setupValidateTestfiles(term) {
+  const btnOpen = document.getElementById("btn-validate-testfiles");
+  const modal = document.getElementById("validate-modal");
+  const summary = document.getElementById("validate-summary");
+  const list = document.getElementById("rename-list");
+  const btnCancel = document.getElementById("btn-validate-cancel");
+  const btnConfirm = document.getElementById("btn-validate-confirm");
+
+  // basename() strips directory, but we want the *relative* path under the
+  // test scores dir so the user can distinguish same-named files in different
+  // subdirs. Falls back to basename if root isn't a prefix (shouldn't happen).
+  function relativeTo(root, full) {
+    if (full.startsWith(root)) {
+      let rest = full.slice(root.length);
+      while (rest.startsWith(PATH_SEP)) rest = rest.slice(1);
+      return rest || basename(full);
+    }
+    return basename(full);
+  }
+
+  let currentRenames = [];
+
+  function renderList(root, renames) {
+    list.innerHTML = "";
+    for (const r of renames) {
+      const row = document.createElement("div");
+      row.className = "rename-row";
+
+      const oldSpan = document.createElement("span");
+      oldSpan.className = "old";
+      oldSpan.textContent = relativeTo(root, r.from);
+
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = "→";
+
+      const newSpan = document.createElement("span");
+      newSpan.className = "new";
+      newSpan.textContent = relativeTo(root, r.to);
+
+      row.append(oldSpan, arrow, newSpan);
+      list.appendChild(row);
+    }
+  }
+
+  function openModal(root, renames) {
+    currentRenames = renames;
+    const n = renames.length;
+    summary.textContent =
+      `${n} file${n === 1 ? "" : "s"} will be renamed. ` +
+      `Collisions are resolved by appending _1, _2, … before the extension.`;
+    renderList(root, renames);
+    modal.hidden = false;
+    btnCancel.focus();
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    currentRenames = [];
+    list.innerHTML = "";
+    btnOpen.focus();
+  }
+
+  btnOpen.addEventListener("click", async () => {
+    const root = localStorage.getItem(STORE_KEY_TESTFILES);
+    if (!root) return;
+    btnOpen.disabled = true;
+    try {
+      const renames = await invoke("scan_testfile_names", { dir: root });
+      if (renames.length === 0) {
+        term.write(`\r\n\x1b[32mAll filenames in the test scores directory are valid.\x1b[0m\r\n`);
+        return;
+      }
+      openModal(root, renames);
+    } catch (e) {
+      term.write(`\r\n\x1b[31mError scanning test scores directory: ${e?.message ?? e}\x1b[0m\r\n`);
+    } finally {
+      updateActionButtons();
+    }
+  });
+
+  btnCancel.addEventListener("click", closeModal);
+
+  btnConfirm.addEventListener("click", async () => {
+    btnConfirm.disabled = true;
+    btnCancel.disabled = true;
+    try {
+      const results = await invoke("rename_testfiles", { renames: currentRenames });
+      const failed = results.filter((r) => r.error);
+      const ok = results.length - failed.length;
+      term.write(`\r\n\x1b[32mRenamed ${ok} file${ok === 1 ? "" : "s"}.\x1b[0m\r\n`);
+      for (const f of failed) {
+        term.write(`\x1b[31m  failed: ${basename(f.from)} → ${basename(f.to)}: ${f.error}\x1b[0m\r\n`);
+      }
+    } catch (e) {
+      term.write(`\r\n\x1b[31mError renaming: ${e?.message ?? e}\x1b[0m\r\n`);
+    } finally {
+      btnConfirm.disabled = false;
+      btnCancel.disabled = false;
+      closeModal();
+      updateActionButtons();
+    }
+  });
+
+  // Click outside the dialog to dismiss — matches common modal conventions
+  // and gives a second way out besides Cancel/Escape.
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+      e.preventDefault();
+      closeModal();
+    }
+  });
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -490,6 +632,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     pathEl: document.getElementById("testfiles-path"),
     storeKey: STORE_KEY_TESTFILES,
     initialValue: testfiles,
+    onSet: (selected) => checkTestfileNames(selected, term),
   });
 
   vtestsPathEl.addEventListener("mouseenter", () => {
@@ -636,6 +779,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
     await invoke("open_path", { path: joinPath(workdir, "diff", "vtest_compare.html") });
   });
+
+  setupValidateTestfiles(term);
 
   // ---- Generate split-button ----
   const splitRoot = document.getElementById("split-button-generate");

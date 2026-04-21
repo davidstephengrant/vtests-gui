@@ -289,6 +289,7 @@ button:focus-visible {
 .workdir-table td:last-child {
   white-space: nowrap;
   width: 1%;
+  text-align: right;
 }
 
 .workdir-table td:last-child button {
@@ -560,4 +561,88 @@ button:focus-visible {
 
 .split-menu-item:active {
   background-color: var(--accent-tint-stronger) !important;
+}
+
+.btn-group {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal {
+  background-color: var(--menu-bg);
+  color: var(--fg-page);
+  border: 1px solid var(--menu-border);
+  border-radius: 10px;
+  box-shadow: var(--menu-shadow);
+  padding: 1.25rem 1.5rem;
+  width: min(720px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.modal-summary {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--workdir-fg);
+}
+
+.rename-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border-neutral);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-filename);
+  font-family: monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.rename-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  word-break: break-all;
+}
+
+.rename-row .arrow {
+  color: var(--fg-hint);
+}
+
+.rename-row .old {
+  color: var(--danger-fg);
+}
+
+.rename-row .new {
+  color: var(--success-border);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }

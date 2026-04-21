@@ -4462,6 +4462,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "parking_lot",
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
