@@ -124,21 +124,6 @@ body {
   background-color: rgba(0, 0, 0, 0.04);
 }
 
-.version-info {
-  font-size: 0.82rem;
-  color: #2a9d5c;
-  font-weight: 500;
-  display: none;
-}
-
-.version-info.visible {
-  display: block;
-}
-
-:root[data-theme="dark"] .version-info {
-  color: #3dbd78;
-}
-
 .workdir-section {
   display: flex;
   flex-direction: column;

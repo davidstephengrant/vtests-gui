@@ -158,40 +158,17 @@ async function validateStoredPath(key) {
   return value;
 }
 
-async function showVersion(versionEl, filePath) {
-  let version = null;
-  try {
-    version = await invoke("get_executable_version", { path: filePath });
-  } catch {
-    // Version detection is best-effort; a probe failure must not bubble up
-    // as an unhandled rejection.
-  }
-  if (version) {
-    versionEl.textContent = "Detected version: " + version;
-    versionEl.classList.add("visible");
-  } else {
-    versionEl.textContent = "";
-    versionEl.classList.remove("visible");
-  }
-}
-
 function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term) {
   const zone = document.getElementById(zoneId);
   const fileNameEl = document.getElementById(fileNameId);
-  const versionEl = document.getElementById("version-" + zoneId.replace("drop-", ""));
   let filePath = initialPath;
 
   function render() {
     fileNameEl.textContent = filePath ? basename(filePath) : "";
     zone.classList.toggle("has-file", !!filePath);
-    if (!filePath) {
-      versionEl.textContent = "";
-      versionEl.classList.remove("visible");
-    }
   }
 
   render();
-  if (filePath) showVersion(versionEl, filePath);
 
   function clear() {
     filePath = null;
@@ -210,7 +187,6 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
     }
     updateResetButton(btnReset);
     updateActionButtons();
-    showVersion(versionEl, path);
   }
 
   zone.addEventListener("click", async () => {
