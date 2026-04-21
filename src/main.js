@@ -247,6 +247,15 @@ async function setupDragDrop(zones) {
   });
 }
 
+function setupPersistedCheckbox(id, storeKey) {
+  const el = document.getElementById(id);
+  el.checked = localStorage.getItem(storeKey) !== "false";
+  el.addEventListener("change", () => {
+    localStorage.setItem(storeKey, el.checked);
+  });
+  return el;
+}
+
 const THEMES = {
   dark: {
     background: "#1a1a1a",
@@ -438,55 +447,50 @@ window.addEventListener("DOMContentLoaded", async () => {
   updateResetButton(btnReset);
   updateActionButtons();
 
-  btnReset.addEventListener("click", () => {
-    term.clear();
-    const savedTheme = localStorage.getItem(STORE_KEY_THEME);
-    localStorage.clear();
-    if (savedTheme) localStorage.setItem(STORE_KEY_THEME, savedTheme);
-    refZone.clear();
-    curZone.clear();
-    setPathEl(document.getElementById("workdir-path"), null);
-    setPathEl(document.getElementById("vtests-path"), null);
-    setPathEl(document.getElementById("testfiles-path"), null);
-    syncDirButton(document.getElementById("btn-workdir"), false);
-    syncDirButton(document.getElementById("btn-vtests"), false);
-    syncDirButton(document.getElementById("btn-testfiles"), false);
-    const vp = document.getElementById("vtests-path");
-    vp.classList.remove("path-invalid");
-    delete vp.dataset.warning;
-    document.getElementById("chk-compare-after").checked = true;
-    document.getElementById("chk-open-browser").checked = true;
-    const splitMain = document.getElementById("split-generate-main");
-    splitMain.textContent = "Generate all";
-    splitMain.dataset.action = "gen-all";
-    updateResetButton(btnReset);
-    updateActionButtons();
-  });
-
-  const btnWorkdir = document.getElementById("btn-workdir");
-  const pathEl = document.getElementById("workdir-path");
-
-  setPathEl(pathEl, workdir);
-  syncDirButton(btnWorkdir, !!workdir);
-
-  btnWorkdir.addEventListener("click", async () => {
-    term.clear();
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) {
+  function setupDirPicker({ btn, pathEl, storeKey, initialValue, onSet }) {
+    setPathEl(pathEl, initialValue);
+    syncDirButton(btn, !!initialValue);
+    if (initialValue) onSet?.(initialValue);
+    btn.addEventListener("click", async () => {
+      term.clear();
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected) return;
       setPathEl(pathEl, selected);
-      syncDirButton(btnWorkdir, true);
-      localStorage.setItem(STORE_KEY_WORKDIR, selected);
+      syncDirButton(btn, true);
+      onSet?.(selected);
+      localStorage.setItem(storeKey, selected);
       updateResetButton(btnReset);
       updateActionButtons();
-    }
-  });
+    });
+    return {
+      clear() {
+        setPathEl(pathEl, null);
+        syncDirButton(btn, false);
+      },
+    };
+  }
 
-  const btnVtests = document.getElementById("btn-vtests");
   const vtestsPathEl = document.getElementById("vtests-path");
 
-  setPathEl(vtestsPathEl, vtests);
-  syncDirButton(btnVtests, !!vtests);
-  if (vtests) validateVtestsDir(vtests, vtestsPathEl, term);
+  const workdirPicker = setupDirPicker({
+    btn: document.getElementById("btn-workdir"),
+    pathEl: document.getElementById("workdir-path"),
+    storeKey: STORE_KEY_WORKDIR,
+    initialValue: workdir,
+  });
+  const vtestsPicker = setupDirPicker({
+    btn: document.getElementById("btn-vtests"),
+    pathEl: vtestsPathEl,
+    storeKey: STORE_KEY_VTESTS,
+    initialValue: vtests,
+    onSet: (selected) => validateVtestsDir(selected, vtestsPathEl, term),
+  });
+  const testfilesPicker = setupDirPicker({
+    btn: document.getElementById("btn-testfiles"),
+    pathEl: document.getElementById("testfiles-path"),
+    storeKey: STORE_KEY_TESTFILES,
+    initialValue: testfiles,
+  });
 
   vtestsPathEl.addEventListener("mouseenter", () => {
     if (!vtestsPathEl.dataset.warning) return;
@@ -500,35 +504,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     tooltip.style.display = "none";
   });
 
-  btnVtests.addEventListener("click", async () => {
+  btnReset.addEventListener("click", () => {
     term.clear();
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) {
-      setPathEl(vtestsPathEl, selected);
-      syncDirButton(btnVtests, true);
-      validateVtestsDir(selected, vtestsPathEl, term);
-      localStorage.setItem(STORE_KEY_VTESTS, selected);
-      updateResetButton(btnReset);
-      updateActionButtons();
-    }
-  });
-
-  const btnTestfiles = document.getElementById("btn-testfiles");
-  const testfilesPathEl = document.getElementById("testfiles-path");
-
-  setPathEl(testfilesPathEl, testfiles);
-  syncDirButton(btnTestfiles, !!testfiles);
-
-  btnTestfiles.addEventListener("click", async () => {
-    term.clear();
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) {
-      setPathEl(testfilesPathEl, selected);
-      syncDirButton(btnTestfiles, true);
-      localStorage.setItem(STORE_KEY_TESTFILES, selected);
-      updateResetButton(btnReset);
-      updateActionButtons();
-    }
+    const savedTheme = localStorage.getItem(STORE_KEY_THEME);
+    localStorage.clear();
+    if (savedTheme) localStorage.setItem(STORE_KEY_THEME, savedTheme);
+    refZone.clear();
+    curZone.clear();
+    workdirPicker.clear();
+    vtestsPicker.clear();
+    testfilesPicker.clear();
+    vtestsPathEl.classList.remove("path-invalid");
+    delete vtestsPathEl.dataset.warning;
+    document.getElementById("chk-compare-after").checked = true;
+    document.getElementById("chk-open-browser").checked = true;
+    const splitMain = document.getElementById("split-generate-main");
+    splitMain.textContent = "Generate all";
+    splitMain.dataset.action = "gen-all";
+    updateResetButton(btnReset);
+    updateActionButtons();
   });
 
   document.getElementById("btn-reset-window").addEventListener("click", async () => {
@@ -635,17 +629,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     runWithUi(0, compare),
   );
 
-  const chkCompareAfter = document.getElementById("chk-compare-after");
-  chkCompareAfter.checked = localStorage.getItem(STORE_KEY_COMPARE_AFTER) !== "false";
-  chkCompareAfter.addEventListener("change", () => {
-    localStorage.setItem(STORE_KEY_COMPARE_AFTER, chkCompareAfter.checked);
-  });
-
-  const chkOpenBrowser = document.getElementById("chk-open-browser");
-  chkOpenBrowser.checked = localStorage.getItem(STORE_KEY_OPEN_BROWSER) !== "false";
-  chkOpenBrowser.addEventListener("change", () => {
-    localStorage.setItem(STORE_KEY_OPEN_BROWSER, chkOpenBrowser.checked);
-  });
+  const chkCompareAfter = setupPersistedCheckbox("chk-compare-after", STORE_KEY_COMPARE_AFTER);
+  setupPersistedCheckbox("chk-open-browser", STORE_KEY_OPEN_BROWSER);
 
   document.getElementById("btn-open-browser").addEventListener("click", async () => {
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);

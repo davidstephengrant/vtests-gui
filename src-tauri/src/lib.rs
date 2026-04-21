@@ -374,7 +374,6 @@ async fn cancel_command(state: tauri::State<'_, Running>) -> Result<(), ()> {
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The CSP in tauri.conf.json includes `style-src 'self' 'unsafe-inline'`.
     // 'unsafe-inline' is required because xterm.js injects dynamic <style>
