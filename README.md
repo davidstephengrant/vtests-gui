@@ -4,6 +4,8 @@ A desktop GUI for running [MuseScore Studio](https://github.com/musescore/MuseSc
 
 Wraps the `vtest-generate-pngs.sh` and `vtest-compare-pngs.sh` scripts shipped with MuseScore Studio, and streams their output into an embedded terminal. Built with [Tauri 2](https://tauri.app/) (Rust backend + vanilla HTML/CSS/JS frontend).
 
+![vtests-gui generating PNGs](docs/screenshot.png)
+
 ## Acknowledgments
 
 Developed with the assistance of [Claude Code](https://claude.com/claude-code), Anthropic's agentic coding CLI.
