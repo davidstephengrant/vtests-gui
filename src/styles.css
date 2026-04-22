@@ -342,7 +342,50 @@ button:focus-visible {
 
 .cancel-row {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 1rem;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: var(--workdir-fg);
+}
+
+.progress[hidden] {
+  display: none;
+}
+
+.progress-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-bar {
+  flex: 1;
+  min-width: 4rem;
+  height: 0.5rem;
+  background-color: var(--bg-filename);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background-color: var(--accent-fg);
+  transition: width 0.25s ease-out;
+}
+
+.progress-count {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .terminal-section {

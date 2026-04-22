@@ -71,7 +71,12 @@
               <td><button class="btn-info" data-info="workdir" aria-label="Help: working directory">?</button></td>
               <td class="workdir-label">Working directory:</td>
               <td id="workdir-path" class="workdir-path"></td>
-              <td><button id="btn-workdir">Change...</button></td>
+              <td>
+                <div class="btn-group">
+                  <button id="btn-open-workdir" disabled>Open</button>
+                  <button id="btn-workdir">Change...</button>
+                </div>
+              </td>
             </tr>
           </table>
           <p class="warning">&#9888; WARNING: Existing contents of the working directory may be permanently deleted at the start of each run.</p>
@@ -132,6 +137,12 @@
         <div id="terminal"></div>
       </div>
       <div class="cancel-row">
+        <div class="progress" id="progress" hidden>
+          <span class="progress-label" id="progress-label"></span>
+          <div class="progress-bar" aria-hidden="true"><div class="progress-fill" id="progress-fill"></div></div>
+          <span class="progress-count" id="progress-count"></span>
+        </div>
+        <button id="btn-open-logs">Open log directory</button>
         <button id="btn-cancel" class="btn-danger-solid" disabled>Stop</button>
       </div>
     </main>
