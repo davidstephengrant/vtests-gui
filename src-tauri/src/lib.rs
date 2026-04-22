@@ -221,18 +221,18 @@ fn count_scores(dir: &str) -> Result<u32, String> {
     Ok(count)
 }
 
-/// Count unique source-score stems among the PNGs in `dir`. mscore emits PNGs
-/// named `<stem>-<page>.png`, where `<page>` is an integer. Stripping a
+/// List unique source-score stems among the PNGs in `dir`, sorted. mscore emits
+/// PNGs named `<stem>-<page>.png`, where `<page>` is an integer. Stripping a
 /// trailing `-<digits>` groups pages back to their source score, so repeated
-/// pages from one score only count once toward progress.
+/// pages from one score only appear once in the returned list.
 #[tauri::command]
-fn count_processed_scores(dir: &str) -> Result<u32, String> {
+fn list_processed_scores(dir: &str) -> Result<Vec<String>, String> {
     let root = std::path::Path::new(dir);
     if !root.is_dir() {
         // The dir may legitimately not exist yet (e.g. polling starts before
-        // prepare_output_dir finishes on a cold start), so 0 is the right
-        // answer rather than an error.
-        return Ok(0);
+        // prepare_output_dir finishes on a cold start), so an empty list is
+        // the right answer rather than an error.
+        return Ok(Vec::new());
     }
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
@@ -255,7 +255,9 @@ fn count_processed_scores(dir: &str) -> Result<u32, String> {
         };
         seen.insert(grouped.to_string());
     }
-    Ok(seen.len() as u32)
+    let mut out: Vec<String> = seen.into_iter().collect();
+    out.sort();
+    Ok(out)
 }
 
 #[tauri::command]
@@ -786,7 +788,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, count_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
+        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
