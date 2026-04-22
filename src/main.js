@@ -17,6 +17,25 @@ let cancelled = false;
 // distinguishes "no diffs", "diffs found", and "error"). Consumed once by
 // the terminal-done listener.
 let suppressNextExitLine = false;
+// Absolute path of the session-wide log file (in the OS app-data dir). Set
+// once at app start by init_session_log; null if that initialization failed.
+let sessionLogPath = null;
+const LOG_ROTATION_KEEP = 5;
+
+// Fire-and-forget: append a single timestamped line to the session log.
+// No-op if the log wasn't initialized.
+function logEvent(message) {
+  invoke("log_event", { message }).catch(() => { /* best-effort */ });
+}
+
+// Human-readable labels for paths we log when the user changes them.
+const LABEL_BY_STORE_KEY = {
+  "files-reference": "reference build",
+  "files-current": "current build",
+  "workdir": "working directory",
+  "vtests-dir": "vtest directory",
+  "testfiles-dir": "test scores directory",
+};
 
 const STORE_KEY_REFERENCE = "files-reference";
 const STORE_KEY_CURRENT = "files-current";
@@ -113,9 +132,40 @@ async function updateActionButtons() {
   splitMain.disabled = !canRun[splitMain.dataset.action];
   document.getElementById("btn-compare").disabled = !(canCompare && dirsSet);
   document.getElementById("btn-open-browser").disabled = !hasDiffReport;
+  document.getElementById("btn-open-workdir").disabled = !workdir;
+  document.getElementById("btn-validate-testfiles").disabled = !localStorage.getItem(STORE_KEY_TESTFILES);
 }
 
-const ALWAYS_ENABLED_BUTTON_IDS = new Set(["btn-cancel", "btn-reset-window"]);
+function showProgress(label, total) {
+  document.getElementById("progress-label").textContent = label;
+  document.getElementById("progress-fill").style.width = "0%";
+  document.getElementById("progress-count").textContent = `0 / ${total}`;
+  document.getElementById("progress").hidden = false;
+}
+
+function setProgress(processed, total) {
+  const shown = Math.min(processed, total);
+  const pct = total > 0 ? (shown / total) * 100 : 0;
+  document.getElementById("progress-fill").style.width = `${pct}%`;
+  document.getElementById("progress-count").textContent = `${shown} / ${total}`;
+}
+
+function hideProgress() {
+  document.getElementById("progress").hidden = true;
+}
+
+const ALWAYS_ENABLED_BUTTON_IDS = new Set([
+  "btn-cancel",
+  "btn-reset-window",
+  // Opens the log directory in the OS file manager; safe to click at any
+  // time, including mid-run, since it doesn't touch the running script.
+  "btn-open-logs",
+  // Modal buttons live inside a hidden overlay during runs, so disabling
+  // them here just leaves them stuck disabled next time the modal opens —
+  // reenableAllButtons only re-enables a specific allowlist. Keep them out.
+  "btn-validate-cancel",
+  "btn-validate-confirm",
+]);
 
 function disableAllButtons() {
   document.querySelectorAll("button").forEach((btn) => {
@@ -127,6 +177,7 @@ function disableAllButtons() {
 
 async function reenableAllButtons() {
   document.getElementById("btn-cancel").disabled = true;
+  hideProgress();
   for (const id of ["btn-workdir", "btn-vtests", "btn-testfiles", "split-generate-toggle"])
     document.getElementById(id).disabled = false;
   updateResetButton(document.getElementById("btn-reset"));
@@ -174,16 +225,20 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
     filePath = null;
     localStorage.removeItem(storeKey);
     render();
+    logEvent(`${LABEL_BY_STORE_KEY[storeKey] ?? storeKey}: cleared`);
   }
 
   async function setPath(path) {
     filePath = path;
     localStorage.setItem(storeKey, path);
     render();
+    logEvent(`${LABEL_BY_STORE_KEY[storeKey] ?? storeKey}: ${path}`);
     try {
       await invoke("set_executable", { path });
     } catch (e) {
-      term.write(`\r\n\x1b[31mError setting executable bit: ${e?.message ?? e}\x1b[0m\r\n`);
+      const msg = e?.message ?? e;
+      term.write(`\r\n\x1b[31mError setting executable bit: ${msg}\x1b[0m\r\n`);
+      logEvent(`error: setting executable bit: ${msg}`);
     }
     updateResetButton(btnReset);
     updateActionButtons();
@@ -211,6 +266,7 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
       const exts = getPlatformFileFilter().extensions.map((e) => "." + e).join("/");
       const names = rejected.map(basename).join(", ");
       term.write(`\r\n\x1b[33mWarning: ignored file(s) not matching ${exts}: ${names}\x1b[0m\r\n`);
+      logEvent(`warning: ignored file(s) not matching ${exts}: ${names}`);
     }
 
     // UI holds a single executable — if several are dropped, last one wins.
@@ -304,10 +360,38 @@ function initTerminal() {
 
   window.addEventListener("resize", () => fitAddon.fit());
 
-  listen("terminal-output", (event) => term.write(event.payload));
+  // Qt emits `qt.qml.typeregistration: ...` chatter on stderr that clutters
+  // the terminal without adding signal. Buffer by line so we can drop those
+  // lines wholesale before writing. Payloads arrive as arbitrary chunks that
+  // may split or merge lines, so match on whole lines only.
+  let outBuf = "";
+  let hiddenWarnings = 0;
+  const dropLine = (line) => /qt\.qml\.typeregistration/.test(line);
+  listen("terminal-output", (event) => {
+    outBuf += event.payload;
+    let out = "";
+    let idx;
+    while ((idx = outBuf.indexOf("\n")) !== -1) {
+      const line = outBuf.slice(0, idx);
+      outBuf = outBuf.slice(idx + 1);
+      if (dropLine(line)) hiddenWarnings++;
+      else out += line + "\n";
+    }
+    if (out) term.write(out);
+  });
   listen("terminal-done", (event) => {
     const code = event.payload;
     const ok = code === 0;
+    logEvent(`run finished: ${cancelled ? "stopped" : (code === null ? "no exit code" : `exit ${code}`)}`);
+    if (hiddenWarnings > 0) {
+      const plural = hiddenWarnings === 1 ? "" : "s";
+      const logNote = sessionLogPath ? ` See ${basename(sessionLogPath)} for unfiltered output.` : "";
+      term.write(
+        `\r\n\x1b[33mHid ${hiddenWarnings} qt.qml.typeregistration warning${plural}.${logNote}\x1b[0m\r\n`,
+      );
+      logEvent(`warning: hid ${hiddenWarnings} qt.qml.typeregistration warning${plural}`);
+      hiddenWarnings = 0;
+    }
     // Only suppress successful intermediate steps in a sequence; a failure
     // must always surface so the user can see something went wrong.
     if (ok && suppressTerminalDoneCount > 0) {
@@ -350,7 +434,9 @@ async function validateVtestsDir(dirPath, pathEl, term) {
     );
     missing = scripts.filter((_, i) => !results[i]);
   } catch (e) {
-    term.write(`\r\n\x1b[31mError validating vtest directory: ${e?.message ?? e}\x1b[0m\r\n`);
+    const msg = e?.message ?? e;
+    term.write(`\r\n\x1b[31mError validating vtest directory: ${msg}\x1b[0m\r\n`);
+    logEvent(`error: validating vtest directory: ${msg}`);
     return;
   }
   if (missing.length > 0) {
@@ -359,6 +445,7 @@ async function validateVtestsDir(dirPath, pathEl, term) {
     pathEl.classList.add("path-invalid");
     pathEl.dataset.warning = tooltipMsg;
     term.write(`\r\n\x1b[33mWarning: ${termMsg}\x1b[0m\r\n`);
+    logEvent(`warning: ${termMsg}`);
   } else {
     pathEl.classList.remove("path-invalid");
     delete pathEl.dataset.warning;
@@ -366,16 +453,165 @@ async function validateVtestsDir(dirPath, pathEl, term) {
   updateActionButtons();
 }
 
+async function checkTestfileNames(dir, term) {
+  try {
+    const renames = await invoke("scan_testfile_names", { dir });
+    if (renames.length === 0) return;
+    const n = renames.length;
+    const warnMsg =
+      `${n} file${n === 1 ? " has" : "s have"} invalid ` +
+      `name${n === 1 ? "" : "s"} in the test scores directory — vtest scripts ` +
+      `may fail on these. Click "Validate filenames..." to review and rename.`;
+    term.write(`\r\n\x1b[33mWarning: ${warnMsg}\x1b[0m\r\n`);
+    logEvent(`warning: ${warnMsg}`);
+  } catch (e) {
+    const msg = e?.message ?? e;
+    term.write(`\r\n\x1b[31mError scanning test scores directory: ${msg}\x1b[0m\r\n`);
+    logEvent(`error: scanning test scores directory: ${msg}`);
+  }
+}
+
 async function preflightBash(term) {
   if (platform !== "windows") return;
   const hasBash = await invoke("command_exists", { name: "bash" });
   if (!hasBash) {
-    term.write(
-      "\x1b[31mWarning: bash was not found on PATH. The vtest scripts " +
+    const msg = "bash was not found on PATH. The vtest scripts " +
       "require bash plus standard Unix tools (imagemagick, coreutils). " +
-      "Install Git Bash or enable WSL to proceed.\x1b[0m\r\n\n"
-    );
+      "Install Git Bash or enable WSL to proceed.";
+    term.write(`\x1b[31mWarning: ${msg}\x1b[0m\r\n\n`);
+    logEvent(`warning: ${msg}`);
   }
+}
+
+function setupValidateTestfiles(term) {
+  const btnOpen = document.getElementById("btn-validate-testfiles");
+  const modal = document.getElementById("validate-modal");
+  const summary = document.getElementById("validate-summary");
+  const list = document.getElementById("rename-list");
+  const btnCancel = document.getElementById("btn-validate-cancel");
+  const btnConfirm = document.getElementById("btn-validate-confirm");
+
+  // basename() strips directory, but we want the *relative* path under the
+  // test scores dir so the user can distinguish same-named files in different
+  // subdirs. Falls back to basename if root isn't a prefix (shouldn't happen).
+  function relativeTo(root, full) {
+    if (full.startsWith(root)) {
+      let rest = full.slice(root.length);
+      while (rest.startsWith(PATH_SEP)) rest = rest.slice(1);
+      return rest || basename(full);
+    }
+    return basename(full);
+  }
+
+  let currentRenames = [];
+
+  function renderList(root, renames) {
+    list.innerHTML = "";
+    for (const r of renames) {
+      const row = document.createElement("div");
+      row.className = "rename-row";
+
+      const oldSpan = document.createElement("span");
+      oldSpan.className = "old";
+      oldSpan.textContent = relativeTo(root, r.from);
+
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = "→";
+
+      const newSpan = document.createElement("span");
+      newSpan.className = "new";
+      newSpan.textContent = relativeTo(root, r.to);
+
+      row.append(oldSpan, arrow, newSpan);
+      list.appendChild(row);
+    }
+  }
+
+  function openModal(root, renames) {
+    currentRenames = renames;
+    const n = renames.length;
+    summary.textContent =
+      `${n} file${n === 1 ? "" : "s"} will be renamed. ` +
+      `Collisions are resolved by appending _1, _2, … before the extension.`;
+    renderList(root, renames);
+    modal.hidden = false;
+    btnCancel.focus();
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    currentRenames = [];
+    list.innerHTML = "";
+    btnOpen.focus();
+  }
+
+  btnOpen.addEventListener("click", async () => {
+    logEvent("clicked: Validate filenames");
+    const root = localStorage.getItem(STORE_KEY_TESTFILES);
+    if (!root) return;
+    btnOpen.disabled = true;
+    try {
+      const renames = await invoke("scan_testfile_names", { dir: root });
+      if (renames.length === 0) {
+        term.write(`\r\n\x1b[32mAll filenames in the test scores directory are valid.\x1b[0m\r\n`);
+        logEvent("info: all filenames in the test scores directory are valid");
+        return;
+      }
+      logEvent(`validate filenames: ${renames.length} invalid`);
+      openModal(root, renames);
+    } catch (e) {
+      const msg = e?.message ?? e;
+      term.write(`\r\n\x1b[31mError scanning test scores directory: ${msg}\x1b[0m\r\n`);
+      logEvent(`error: scanning test scores directory: ${msg}`);
+    } finally {
+      updateActionButtons();
+    }
+  });
+
+  btnCancel.addEventListener("click", () => {
+    logEvent("clicked: Cancel (rename modal)");
+    closeModal();
+  });
+
+  btnConfirm.addEventListener("click", async () => {
+    logEvent(`clicked: Rename (${currentRenames.length} file${currentRenames.length === 1 ? "" : "s"})`);
+    btnConfirm.disabled = true;
+    btnCancel.disabled = true;
+    try {
+      const results = await invoke("rename_testfiles", { renames: currentRenames });
+      const failed = results.filter((r) => r.error);
+      const ok = results.length - failed.length;
+      term.write(`\r\n\x1b[32mRenamed ${ok} file${ok === 1 ? "" : "s"}.\x1b[0m\r\n`);
+      logEvent(`info: renamed ${ok} file${ok === 1 ? "" : "s"}`);
+      for (const f of failed) {
+        term.write(`\x1b[31m  failed: ${basename(f.from)} → ${basename(f.to)}: ${f.error}\x1b[0m\r\n`);
+        logEvent(`error: rename failed: ${basename(f.from)} -> ${basename(f.to)}: ${f.error}`);
+      }
+    } catch (e) {
+      const msg = e?.message ?? e;
+      term.write(`\r\n\x1b[31mError renaming: ${msg}\x1b[0m\r\n`);
+      logEvent(`error: renaming: ${msg}`);
+    } finally {
+      btnConfirm.disabled = false;
+      btnCancel.disabled = false;
+      closeModal();
+      updateActionButtons();
+    }
+  });
+
+  // Click outside the dialog to dismiss — matches common modal conventions
+  // and gives a second way out besides Cancel/Escape.
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+      e.preventDefault();
+      closeModal();
+    }
+  });
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -385,7 +621,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   const initialThemeChoice = localStorage.getItem(STORE_KEY_THEME) || "system";
   themeSelect.value = initialThemeChoice;
   setTheme(initialThemeChoice, term);
-  themeSelect.addEventListener("change", () => setTheme(themeSelect.value, term));
+  themeSelect.addEventListener("change", () => {
+    setTheme(themeSelect.value, term);
+    logEvent(`theme: ${themeSelect.value}`);
+  });
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (themeSelect.value === "system") setTheme("system", term);
   });
@@ -395,16 +634,27 @@ window.addEventListener("DOMContentLoaded", async () => {
   // into the devtools console.
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
-    term.write(`\r\n\x1b[31mUnhandled error: ${reason?.message ?? reason}\x1b[0m\r\n`);
+    const msg = reason?.message ?? reason;
+    term.write(`\r\n\x1b[31mUnhandled error: ${msg}\x1b[0m\r\n`);
+    logEvent(`error: unhandled: ${msg}`);
   });
 
   // Resolve platform before anything that calls joinPath / getPlatformFileFilter.
   try {
     platform = await invoke("platform");
   } catch (e) {
-    term.write(`\r\n\x1b[31mError detecting platform: ${e?.message ?? e}\x1b[0m\r\n`);
+    const msg = e?.message ?? e;
+    term.write(`\r\n\x1b[31mError detecting platform: ${msg}\x1b[0m\r\n`);
+    logEvent(`error: detecting platform: ${msg}`);
   }
   PATH_SEP = platform === "windows" ? "\\" : "/";
+
+  // Open the session log before anything else so subsequent events land in it.
+  // Silent failure is acceptable — the app still functions without logging.
+  try {
+    sessionLogPath = await invoke("init_session_log", { keep: LOG_ROTATION_KEEP });
+    logEvent(`session started (platform: ${platform})`);
+  } catch (_) { sessionLogPath = null; }
 
   await preflightBash(term);
 
@@ -452,13 +702,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     syncDirButton(btn, !!initialValue);
     if (initialValue) onSet?.(initialValue);
     btn.addEventListener("click", async () => {
-      term.clear();
       const selected = await open({ directory: true, multiple: false });
       if (!selected) return;
       setPathEl(pathEl, selected);
       syncDirButton(btn, true);
       onSet?.(selected);
       localStorage.setItem(storeKey, selected);
+      logEvent(`${LABEL_BY_STORE_KEY[storeKey] ?? storeKey}: ${selected}`);
       updateResetButton(btnReset);
       updateActionButtons();
     });
@@ -466,6 +716,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       clear() {
         setPathEl(pathEl, null);
         syncDirButton(btn, false);
+        logEvent(`${LABEL_BY_STORE_KEY[storeKey] ?? storeKey}: cleared`);
       },
     };
   }
@@ -490,6 +741,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     pathEl: document.getElementById("testfiles-path"),
     storeKey: STORE_KEY_TESTFILES,
     initialValue: testfiles,
+    onSet: (selected) => checkTestfileNames(selected, term),
   });
 
   vtestsPathEl.addEventListener("mouseenter", () => {
@@ -505,6 +757,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   btnReset.addEventListener("click", () => {
+    logEvent("clicked: Reset all fields");
     term.clear();
     const savedTheme = localStorage.getItem(STORE_KEY_THEME);
     localStorage.clear();
@@ -526,12 +779,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   document.getElementById("btn-reset-window").addEventListener("click", async () => {
+    logEvent("clicked: Reset window geometry");
     const win = getCurrentWindow();
     try {
       await win.setSize(new LogicalSize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
       await win.center();
     } catch (e) {
-      term.write(`\r\n\x1b[31mError resetting window geometry: ${e?.message ?? e}\x1b[0m\r\n`);
+      const msg = e?.message ?? e;
+      term.write(`\r\n\x1b[31mError resetting window geometry: ${msg}\x1b[0m\r\n`);
+      logEvent(`error: resetting window geometry: ${msg}`);
     }
   });
 
@@ -556,41 +812,91 @@ window.addEventListener("DOMContentLoaded", async () => {
     try {
       await work();
     } catch (e) {
-      term.write(`\r\n\x1b[31mError: ${e?.message ?? e}\x1b[0m\r\n`);
+      const msg = e?.message ?? e;
+      term.write(`\r\n\x1b[31mError: ${msg}\x1b[0m\r\n`);
+      logEvent(`error: run aborted: ${msg}`);
       await reenableAllButtons();
     } finally {
       suppressTerminalDoneCount = 0;
     }
   }
 
-  async function generateReference() {
-    const vtestsDir = localStorage.getItem(STORE_KEY_VTESTS);
-    const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
-    const outputDir = joinPath(workdir, "ref");
-    const mscore = localStorage.getItem(STORE_KEY_REFERENCE);
-    const scores = localStorage.getItem(STORE_KEY_TESTFILES);
-    const script = joinPath(vtestsDir, SCRIPT_GENERATE);
-    term.write(`${script} --output-dir ${outputDir} --mscore ${mscore} --scores ${scores}\r\n\n`);
-    await invoke("prepare_output_dir", { workdir, subdir: "ref" });
-    return await invoke("run_command", {
-      program: script,
-      args: ["--output-dir", outputDir, "--mscore", mscore, "--scores", scores],
-    });
+  // Poll the output dir at 500ms intervals and update the progress bar when
+  // the processed-stems count ticks up. The poll is cheap (one read_dir +
+  // HashSet), and 500ms is fine-grained enough to feel live.
+  function startGenerateProgress(outputDir, total) {
+    let lastProcessed = 0;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const p = await invoke("count_processed_scores", { dir: outputDir });
+        if (p > lastProcessed) {
+          lastProcessed = p;
+          setProgress(p, total);
+        }
+      } catch (_) { /* transient FS errors are fine — next tick will retry */ }
+    };
+    const id = setInterval(tick, 500);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
   }
 
-  async function generateCurrent() {
+  async function runGenerate(outputSubdir, mscoreKey, label) {
     const vtestsDir = localStorage.getItem(STORE_KEY_VTESTS);
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
-    const outputDir = joinPath(workdir, "current");
-    const mscore = localStorage.getItem(STORE_KEY_CURRENT);
+    const outputDir = joinPath(workdir, outputSubdir);
+    const mscore = localStorage.getItem(mscoreKey);
     const scores = localStorage.getItem(STORE_KEY_TESTFILES);
     const script = joinPath(vtestsDir, SCRIPT_GENERATE);
     term.write(`${script} --output-dir ${outputDir} --mscore ${mscore} --scores ${scores}\r\n\n`);
-    await invoke("prepare_output_dir", { workdir, subdir: "current" });
-    return await invoke("run_command", {
-      program: script,
-      args: ["--output-dir", outputDir, "--mscore", mscore, "--scores", scores],
+    await invoke("prepare_output_dir", { workdir, subdir: outputSubdir });
+    // Total may be 0 if the dir is empty or unreadable — skip the bar in
+    // that case rather than show a meaningless "0 / 0".
+    let total = 0;
+    try { total = await invoke("count_scores", { dir: scores }); } catch (_) {}
+    let stopProgress = null;
+    if (total > 0) {
+      showProgress(label, total);
+      stopProgress = startGenerateProgress(outputDir, total);
+    }
+    try {
+      return await invoke("run_command", {
+        program: script,
+        args: ["--output-dir", outputDir, "--mscore", mscore, "--scores", scores],
+      });
+    } finally {
+      if (stopProgress) stopProgress();
+    }
+  }
+
+  const generateReference = () => runGenerate("ref", STORE_KEY_REFERENCE, "Generating reference PNGs");
+  const generateCurrent   = () => runGenerate("current", STORE_KEY_CURRENT, "Generating current PNGs");
+
+  // vtest-compare-pngs.sh prints one `Equal:` or `Different:` line per file
+  // it compares, so we can count those off stdout without hitting the
+  // filesystem. Line-buffer because a single `terminal-output` chunk may
+  // carry a partial line at either edge. The match isn't anchored at ^ because
+  // ImageMagick `compare -metric AE` writes the pixel-diff count with no
+  // trailing newline, so each line we receive looks like `0Equal: ref: ...`.
+  async function startCompareProgress(total) {
+    let processed = 0;
+    let buf = "";
+    const unlisten = await listen("terminal-output", (event) => {
+      buf += event.payload;
+      let idx;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        if (/(Equal|Different): ref:/.test(line)) {
+          processed++;
+          setProgress(processed, total);
+        }
+      }
     });
+    return async () => { await unlisten(); };
   }
 
   async function compare() {
@@ -606,36 +912,73 @@ window.addEventListener("DOMContentLoaded", async () => {
     // failure, so replace the generic [process exited] with our own status
     // interpreted from (exit code, report presence).
     suppressNextExitLine = true;
-    const code = await invoke("run_command", {
-      program: script,
-      args: ["--reference-dir", refDir, "--current-dir", currentDir, "--output-dir", outputDir],
-    });
+    let total = 0;
+    try { total = await invoke("count_pngs", { dir: refDir }); } catch (_) {}
+    let stopProgress = null;
+    if (total > 0) {
+      showProgress("Comparing PNGs", total);
+      stopProgress = await startCompareProgress(total);
+    }
+    let code;
+    try {
+      code = await invoke("run_command", {
+        program: script,
+        args: ["--reference-dir", refDir, "--current-dir", currentDir, "--output-dir", outputDir],
+      });
+    } finally {
+      if (stopProgress) await stopProgress();
+    }
     if (cancelled) return code;
     const reportPath = joinPath(outputDir, "vtest_compare.html");
     const reportExists = await invoke("path_exists", { path: reportPath });
     if (reportExists) {
       term.write(`\r\n\x1b[33mDiffs found.\x1b[0m\r\n`);
+      logEvent("warning: diffs found");
       if (document.getElementById("chk-open-browser").checked)
         await invoke("open_path", { path: reportPath });
     } else if (code === 0) {
       term.write(`\r\n\x1b[32mNo diffs found.\x1b[0m\r\n`);
+      logEvent("info: no diffs found");
     } else {
       term.write(`\r\n\x1b[31mCompare failed (exit code ${code}).\x1b[0m\r\n`);
+      logEvent(`error: compare failed (exit code ${code})`);
     }
     return code;
   }
 
-  document.getElementById("btn-compare").addEventListener("click", () =>
-    runWithUi(0, compare),
-  );
+  document.getElementById("btn-compare").addEventListener("click", () => {
+    logEvent("clicked: Compare");
+    runWithUi(0, compare);
+  });
 
   const chkCompareAfter = setupPersistedCheckbox("chk-compare-after", STORE_KEY_COMPARE_AFTER);
-  setupPersistedCheckbox("chk-open-browser", STORE_KEY_OPEN_BROWSER);
+  chkCompareAfter.addEventListener("change", () => {
+    logEvent(`'compare after generating': ${chkCompareAfter.checked ? "on" : "off"}`);
+  });
+  const chkOpenBrowser = setupPersistedCheckbox("chk-open-browser", STORE_KEY_OPEN_BROWSER);
+  chkOpenBrowser.addEventListener("change", () => {
+    logEvent(`'open diff in browser': ${chkOpenBrowser.checked ? "on" : "off"}`);
+  });
 
   document.getElementById("btn-open-browser").addEventListener("click", async () => {
+    logEvent("clicked: Open diff in browser");
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
     await invoke("open_path", { path: joinPath(workdir, "diff", "vtest_compare.html") });
   });
+
+  document.getElementById("btn-open-workdir").addEventListener("click", async () => {
+    logEvent("clicked: Open working directory");
+    const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
+    if (workdir) await invoke("open_path", { path: workdir });
+  });
+
+  document.getElementById("btn-open-logs").addEventListener("click", async () => {
+    logEvent("clicked: Open log directory");
+    const dir = await invoke("get_log_dir");
+    if (dir) await invoke("open_path", { path: dir });
+  });
+
+  setupValidateTestfiles(term);
 
   // ---- Generate split-button ----
   const splitRoot = document.getElementById("split-button-generate");
@@ -670,6 +1013,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   splitMain.addEventListener("click", () => {
     const action = splitMain.dataset.action;
     const withCompare = chkCompareAfter.checked;
+    logEvent(`clicked: ${splitMain.textContent.trim()}${withCompare ? " (compare after)" : ""}`);
     // Count the commands that will run so terminal-done suppression only hides
     // the intermediate [process exited] lines; the final step shows its status
     // (compare handles its own line via suppressNextExitLine).

@@ -13,10 +13,12 @@ Developed with the assistance of [Claude Code](https://claude.com/claude-code), 
 - Pick two MuseScore Studio builds (reference and current) via drag-and-drop or file picker
 - Generate PNG renders for either build, or both in sequence
 - Compare the two render sets and open the resulting HTML diff report in the browser
+- Detect and batch-rename test score filenames that could trip up the vtest scripts
 - Cross-platform: Linux (AppImage), macOS (.app), Windows (.exe)
 - Remembers paths and preferences between runs
 - Light / dark / system theme
 - Cancel a running job at any time
+- Per-session log file (5-run rotation) in the OS app-data directory, openable from the UI
 
 ## Prerequisites
 
@@ -70,6 +72,20 @@ Installers and binaries are written to `src-tauri/target/release/bundle/`.
    - *Generate all* — render both in sequence.
    - *Compare* — diff the two render sets; opens `diff/vtest_compare.html` in your browser when diffs are found (toggleable).
    - *Generate all and compare* — the full pipeline in one click.
+
+### Test score filenames
+
+The vtest scripts are fairly strict about what they'll accept as a filename. Spaces, parentheses, `#`, `&`, non-ASCII characters and the like can cause the shell pipelines inside `vtest-generate-pngs.sh` / `vtest-compare-pngs.sh` to misquote paths, skip files silently, or fail outright. In practice, anything outside `A–Z`, `a–z`, `0–9`, `.`, `_`, and `-` is best avoided.
+
+Whenever the *Test scores directory* is loaded (at startup or via *Change...*), the app scans it recursively and prints a warning in the terminal if any file has an invalid name. Click **Validate filenames...** next to the directory to open a preview showing each offending file and its proposed replacement — runs of invalid characters are collapsed into a single `_`, and name collisions are resolved by appending `_1`, `_2`, … before the extension so nothing gets overwritten. Confirm to apply the renames; cancel to back out.
+
+### Session logs
+
+Each app session writes a timestamped log file containing user interactions (button clicks, path changes, settings toggles), the commands spawned for each run, their unfiltered stdout/stderr, and any info/warning/error messages surfaced in the terminal. The five most recent logs are kept; older ones are pruned at startup. Click **Open log directory** (below the terminal) to reveal them in the OS file manager. Typical locations:
+
+- **Linux:** `~/.local/share/no.davidgrant.vtests-gui/logs/`
+- **macOS:** `~/Library/Logs/no.davidgrant.vtests-gui/`
+- **Windows:** `%LOCALAPPDATA%\no.davidgrant.vtests-gui\logs\`
 
 ## Project layout
 
