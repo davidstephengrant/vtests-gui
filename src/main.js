@@ -20,6 +20,10 @@ let suppressNextExitLine = false;
 // Absolute path of the session-wide log file (in the OS app-data dir). Set
 // once at app start by init_session_log; null if that initialization failed.
 let sessionLogPath = null;
+// Set by startGenerateProgress; read by the terminal-done listener so it can
+// flush any in-flight polling and print the final batch of "processed:" lines
+// before writing the end-of-run marker ([cancelled] / [process exited]).
+let activeProgressStop = null;
 const LOG_ROTATION_KEEP = 5;
 
 // Fire-and-forget: append a single timestamped line to the session log.
@@ -379,9 +383,15 @@ function initTerminal() {
     }
     if (out) term.write(out);
   });
-  listen("terminal-done", (event) => {
+  listen("terminal-done", async (event) => {
     const code = event.payload;
     const ok = code === 0;
+    // Flush any in-flight progress polling so the final batch of "processed:"
+    // lines prints above the end-of-run marker. Safe during compare runs —
+    // they don't use the poller, so activeProgressStop is null.
+    if (activeProgressStop) {
+      try { await activeProgressStop(); } catch (_) { /* best-effort */ }
+    }
     logEvent(`run finished: ${cancelled ? "stopped" : (code === null ? "no exit code" : `exit ${code}`)}`);
     if (hiddenWarnings > 0) {
       const plural = hiddenWarnings === 1 ? "" : "s";
@@ -827,16 +837,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   function startGenerateProgress(outputDir, total, term) {
     const seen = new Set();
     let stopped = false;
+    let settled = false;
     // Serialize ticks so a slow read_dir can't let two invocations overlap.
     let inFlight = null;
 
     const tick = async () => {
       try {
         const stems = await invoke("list_processed_scores", { dir: outputDir });
-        // Re-check cancelled *after* the await: a tick already in flight when
-        // the user clicks Stop must not print processed lines below the
-        // [cancelled] marker the terminal-done handler writes.
-        if (cancelled) return;
         const fresh = [];
         for (const stem of stems) {
           if (!seen.has(stem)) {
@@ -860,14 +867,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const id = setInterval(scheduled, 100);
-    return async () => {
+    // Idempotent: both the runGenerate finally block and the terminal-done
+    // listener race to call this. First caller drains; the other no-ops.
+    const stop = async () => {
+      if (settled) return;
+      settled = true;
       stopped = true;
       clearInterval(id);
       // Drain: catch files that landed between the last tick and stop so the
-      // final few don't go unreported when the script finishes fast.
+      // final batch prints above the end-of-run marker.
       if (inFlight) await inFlight;
       await tick();
+      // Only clear if still pointing at us — a later generate step may have
+      // overwritten it while our drain was awaiting.
+      if (activeProgressStop === stop) activeProgressStop = null;
     };
+    activeProgressStop = stop;
+    return stop;
   }
 
   async function runGenerate(outputSubdir, mscoreKey, label) {
