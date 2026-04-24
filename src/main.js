@@ -20,6 +20,10 @@ let suppressNextExitLine = false;
 // Absolute path of the session-wide log file (in the OS app-data dir). Set
 // once at app start by init_session_log; null if that initialization failed.
 let sessionLogPath = null;
+// Set by startGenerateProgress; read by the terminal-done listener so it can
+// flush any in-flight polling and print the final batch of "processed:" lines
+// before writing the end-of-run marker ([cancelled] / [process exited]).
+let activeProgressStop = null;
 const LOG_ROTATION_KEEP = 5;
 
 // Fire-and-forget: append a single timestamped line to the session log.
@@ -379,9 +383,15 @@ function initTerminal() {
     }
     if (out) term.write(out);
   });
-  listen("terminal-done", (event) => {
+  listen("terminal-done", async (event) => {
     const code = event.payload;
     const ok = code === 0;
+    // Flush any in-flight progress polling so the final batch of "processed:"
+    // lines prints above the end-of-run marker. Safe during compare runs —
+    // they don't use the poller, so activeProgressStop is null.
+    if (activeProgressStop) {
+      try { await activeProgressStop(); } catch (_) { /* best-effort */ }
+    }
     logEvent(`run finished: ${cancelled ? "stopped" : (code === null ? "no exit code" : `exit ${code}`)}`);
     if (hiddenWarnings > 0) {
       const plural = hiddenWarnings === 1 ? "" : "s";
@@ -821,27 +831,59 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // Poll the output dir at 500ms intervals and update the progress bar when
-  // the processed-stems count ticks up. The poll is cheap (one read_dir +
-  // HashSet), and 500ms is fine-grained enough to feel live.
-  function startGenerateProgress(outputDir, total) {
-    let lastProcessed = 0;
+  // Poll the output dir every 100ms for new score stems, printing each
+  // newly-processed file once. Each tick is one read_dir + a HashSet over
+  // the PNGs, which stays cheap relative to what mscore is doing.
+  function startGenerateProgress(outputDir, total, term) {
+    const seen = new Set();
     let stopped = false;
+    let settled = false;
+    // Serialize ticks so a slow read_dir can't let two invocations overlap.
+    let inFlight = null;
+
     const tick = async () => {
-      if (stopped) return;
       try {
-        const p = await invoke("count_processed_scores", { dir: outputDir });
-        if (p > lastProcessed) {
-          lastProcessed = p;
-          setProgress(p, total);
+        const stems = await invoke("list_processed_scores", { dir: outputDir });
+        const fresh = [];
+        for (const stem of stems) {
+          if (!seen.has(stem)) {
+            seen.add(stem);
+            fresh.push(stem);
+          }
+        }
+        if (fresh.length > 0) {
+          for (const stem of fresh) {
+            term.write(`\x1b[90mprocessed: ${stem}\x1b[0m\r\n`);
+            logEvent(`processed: ${stem}`);
+          }
+          setProgress(seen.size, total);
         }
       } catch (_) { /* transient FS errors are fine — next tick will retry */ }
     };
-    const id = setInterval(tick, 500);
-    return () => {
+
+    const scheduled = () => {
+      if (stopped || inFlight) return;
+      inFlight = tick().finally(() => { inFlight = null; });
+    };
+
+    const id = setInterval(scheduled, 100);
+    // Idempotent: both the runGenerate finally block and the terminal-done
+    // listener race to call this. First caller drains; the other no-ops.
+    const stop = async () => {
+      if (settled) return;
+      settled = true;
       stopped = true;
       clearInterval(id);
+      // Drain: catch files that landed between the last tick and stop so the
+      // final batch prints above the end-of-run marker.
+      if (inFlight) await inFlight;
+      await tick();
+      // Only clear if still pointing at us — a later generate step may have
+      // overwritten it while our drain was awaiting.
+      if (activeProgressStop === stop) activeProgressStop = null;
     };
+    activeProgressStop = stop;
+    return stop;
   }
 
   async function runGenerate(outputSubdir, mscoreKey, label) {
@@ -860,7 +902,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     let stopProgress = null;
     if (total > 0) {
       showProgress(label, total);
-      stopProgress = startGenerateProgress(outputDir, total);
+      stopProgress = startGenerateProgress(outputDir, total, term);
     }
     try {
       return await invoke("run_command", {
@@ -868,7 +910,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         args: ["--output-dir", outputDir, "--mscore", mscore, "--scores", scores],
       });
     } finally {
-      if (stopProgress) stopProgress();
+      if (stopProgress) await stopProgress();
     }
   }
 
@@ -1020,17 +1062,22 @@ window.addEventListener("DOMContentLoaded", async () => {
     const genSteps = action === "gen-all" ? 2 : 1;
     const suppressCount = genSteps + (withCompare ? 1 : 0) - 1;
     runWithUi(suppressCount, async () => {
+      // Non-zero exits don't halt the chain — partial output is common (e.g.
+      // some scores are saved in a newer format than the mscore binary can
+      // read) and the user typically still wants the rest of the sequence to
+      // run. The failed step's red [process exited] stays visible so the
+      // failure doesn't go unnoticed. Cancel still halts, though.
       if (action === "gen-reference") {
-        const code = await generateReference();
-        if (cancelled || code !== 0) return;
+        await generateReference();
+        if (cancelled) return;
       } else if (action === "gen-current") {
-        const code = await generateCurrent();
-        if (cancelled || code !== 0) return;
+        await generateCurrent();
+        if (cancelled) return;
       } else if (action === "gen-all") {
-        const refCode = await generateReference();
-        if (cancelled || refCode !== 0) return;
-        const curCode = await generateCurrent();
-        if (cancelled || curCode !== 0) return;
+        await generateReference();
+        if (cancelled) return;
+        await generateCurrent();
+        if (cancelled) return;
       } else {
         return;
       }

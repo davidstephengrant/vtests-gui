@@ -15,6 +15,7 @@ Developed with the assistance of [Claude Code](https://claude.com/claude-code), 
 - Pick two MuseScore Studio builds (reference and current) via drag-and-drop or file picker
 - Generate PNG renders for either build, or both in sequence
 - Compare the two render sets and open the resulting HTML diff report in the browser
+- Live progress bar and per-score log during runs
 - Detect and batch-rename test score filenames that could trip up the vtest scripts
 - Cross-platform: Linux (AppImage), macOS (.app), Windows (.exe)
 - Remembers paths and preferences between runs
@@ -74,6 +75,12 @@ Installers and binaries are written to `src-tauri/target/release/bundle/`.
    - *Generate all* — render both in sequence.
    - *Compare* — diff the two render sets; opens `diff/vtest_compare.html` in your browser when diffs are found (toggleable).
    - *Generate all and compare* — the full pipeline in one click.
+
+### Which builds to compare
+
+Rendering changes accumulate over time, so the most useful comparisons are between builds that are close together in the development cycle — e.g. the latest nightly as *reference* against a build from a new PR as *current*. For a new stable release, spot-checking a handful of specific scores tends to be more practical than running the full test corpus.
+
+Note also that each MuseScore Studio build can only render score files saved in its own format or older. Scores saved in a newer version than the binary supports will be silently skipped and won't appear in the diff.
 
 ### Test score filenames
 
