@@ -220,6 +220,7 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
 
   function render() {
     fileNameEl.textContent = filePath ? basename(filePath) : "";
+    fileNameEl.title = filePath ?? "";
     zone.classList.toggle("has-file", !!filePath);
   }
 
