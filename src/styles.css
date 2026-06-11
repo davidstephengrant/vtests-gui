@@ -689,3 +689,11 @@ button:focus-visible {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+
+.build-info {
+  margin: 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--fg-hint);
+  user-select: text;
+}

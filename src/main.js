@@ -670,6 +670,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     logEvent(`session started (platform: ${platform})`);
   } catch (_) { sessionLogPath = null; }
 
+  try {
+    document.getElementById("build-info").textContent = await invoke("build_id");
+  } catch (_) {}
+
   await preflightBash(term);
 
   const tooltip = document.createElement("div");

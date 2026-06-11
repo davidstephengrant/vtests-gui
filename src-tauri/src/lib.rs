@@ -10,6 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static LINK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tauri::command]
+fn build_id() -> &'static str {
+    env!("BUILD_ID")
+}
+
+#[tauri::command]
 fn path_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }
@@ -837,7 +842,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, make_safe_path, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
+        .invoke_handler(tauri::generate_handler![build_id, path_exists, platform, command_exists, open_path, set_executable, make_safe_path, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
