@@ -34,6 +34,7 @@ fn git_is_dirty() -> bool {
         .args(["status", "--porcelain"])
         .output()
         .ok()
-        .map(|o| !o.stdout.is_empty())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.lines().any(|l| !l.starts_with("??")))
         .unwrap_or(false)
 }
