@@ -388,6 +388,8 @@ function initTerminal() {
     }
     if (out) term.write(out);
   });
+  term.clearBuffer = () => { outBuf = ""; };
+
   listen("terminal-done", async (event) => {
     const code = event.payload;
     const ok = code === 0;
@@ -823,6 +825,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // between steps.
   async function runWithUi(sequenceSuppressCount, work) {
     term.clear();
+    term.clearBuffer();
     disableAllButtons();
     cancelled = false;
     suppressTerminalDoneCount = sequenceSuppressCount;
@@ -834,6 +837,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       logEvent(`error: run aborted: ${msg}`);
     } finally {
       suppressTerminalDoneCount = 0;
+      suppressNextExitLine = false;
       await reenableAllButtons();
     }
   }
@@ -901,9 +905,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     const scores = localStorage.getItem(STORE_KEY_TESTFILES);
     const script = joinPath(vtestsDir, SCRIPT_GENERATE);
     if (platform === "windows") {
-      for (const [label, p] of [["output directory", outputDir], ["mscore executable", mscore], ["test scores directory", scores]]) {
+      for (const [fieldLabel, p] of [["output directory", outputDir], ["mscore executable", mscore], ["test scores directory", scores]]) {
         if (hasUnsafeShellChars(p)) {
-          const msg = `${label} path has spaces or special characters that may cause problems with vtest scripts on Windows: ${p}`;
+          const msg = `${fieldLabel} path has spaces or special characters that may cause problems with vtest scripts on Windows: ${p}`;
           term.write(`\x1b[33mWarning: ${msg}\x1b[0m\r\n`);
           logEvent(`warning: ${msg}`);
         }
@@ -1040,7 +1044,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-open-browser").addEventListener("click", async () => {
     logEvent("clicked: Open diff in browser");
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
-    await invoke("open_path", { path: joinPath(workdir, "diff", "vtest_compare.html") });
+    if (workdir) await invoke("open_path", { path: joinPath(workdir, "diff", "vtest_compare.html") });
   });
 
   document.getElementById("btn-open-workdir").addEventListener("click", async () => {

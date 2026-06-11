@@ -830,7 +830,24 @@ async fn cancel_command(
     Ok(())
 }
 
+// Delete any vtlink-* symlinks left behind by previous app sessions.
+#[cfg(unix)]
+fn cleanup_stale_symlinks() {
+    let base = std::env::temp_dir().join("vtests-gui-links");
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("vtlink-") {
+                std::fs::remove_file(entry.path()).ok();
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn cleanup_stale_symlinks() {}
+
 pub fn run() {
+    cleanup_stale_symlinks();
     // The CSP in tauri.conf.json includes `style-src 'self' 'unsafe-inline'`.
     // 'unsafe-inline' is required because xterm.js injects dynamic <style>
     // rules at runtime for per-terminal theming and sizing. Removing it
