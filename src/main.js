@@ -220,6 +220,7 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
 
   function render() {
     fileNameEl.textContent = filePath ? basename(filePath) : "";
+    fileNameEl.title = filePath ?? "";
     zone.classList.toggle("has-file", !!filePath);
   }
 
@@ -423,7 +424,6 @@ function initTerminal() {
         term.write(`\r\n${color}[process exited]\x1b[0m\r\n`);
       }
     }
-    reenableAllButtons();
   });
 
   return term;
@@ -809,11 +809,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     invoke("cancel_command");
   });
 
-  // If `work` throws before any run_command spawned (e.g. prepare_output_dir
-  // rejects the workdir), no terminal-done event will ever arrive to
-  // re-enable the UI — so we re-enable here. If a command did spawn, its
-  // Cleanup drop guard emits terminal-done and re-enables the UI; this catch
-  // then re-enables again, which is idempotent.
+  // The UI is re-enabled once the whole sequence finishes, not per
+  // terminal-done — intermediate steps can exit non-zero (see the split-main
+  // handler's comment) and we don't want the buttons flickering back on
+  // between steps.
   async function runWithUi(sequenceSuppressCount, work) {
     term.clear();
     disableAllButtons();
@@ -825,9 +824,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       const msg = e?.message ?? e;
       term.write(`\r\n\x1b[31mError: ${msg}\x1b[0m\r\n`);
       logEvent(`error: run aborted: ${msg}`);
-      await reenableAllButtons();
     } finally {
       suppressTerminalDoneCount = 0;
+      await reenableAllButtons();
     }
   }
 
