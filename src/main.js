@@ -58,6 +58,10 @@ function basename(filePath) {
   return filePath.replace(/.*[\\/]/, "");
 }
 
+function hasUnsafeShellChars(path) {
+  return /[ \t()\[\]{}'"`\\!#$&*?;<>|~]/.test(path);
+}
+
 // Populated at init from the Rust `platform` command. Using navigator.userAgent
 // is fragile across webview versions — the backend is the authoritative source.
 let platform = "linux";
@@ -892,8 +896,24 @@ window.addEventListener("DOMContentLoaded", async () => {
     const mscore = localStorage.getItem(mscoreKey);
     const scores = localStorage.getItem(STORE_KEY_TESTFILES);
     const script = joinPath(vtestsDir, SCRIPT_GENERATE);
+    if (platform === "windows") {
+      for (const [label, p] of [["output directory", outputDir], ["mscore executable", mscore], ["test scores directory", scores]]) {
+        if (hasUnsafeShellChars(p)) {
+          const msg = `${label} path has spaces or special characters that may cause problems with vtest scripts on Windows: ${p}`;
+          term.write(`\x1b[33mWarning: ${msg}\x1b[0m\r\n`);
+          logEvent(`warning: ${msg}`);
+        }
+      }
+    }
     term.write(`${script} --output-dir ${outputDir} --mscore ${mscore} --scores ${scores}\r\n\n`);
     await invoke("prepare_output_dir", { workdir, subdir: outputSubdir });
+    // Resolve symlinks for any paths that contain spaces or shell-special
+    // characters — vtest scripts may use argv values unquoted internally.
+    const [safeOutputDir, safeMscore, safeScores] = await Promise.all([
+      invoke("make_safe_path", { path: outputDir }),
+      invoke("make_safe_path", { path: mscore }),
+      invoke("make_safe_path", { path: scores }),
+    ]);
     // Total may be 0 if the dir is empty or unreadable — skip the bar in
     // that case rather than show a meaningless "0 / 0".
     let total = 0;
@@ -906,7 +926,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     try {
       return await invoke("run_command", {
         program: script,
-        args: ["--output-dir", outputDir, "--mscore", mscore, "--scores", scores],
+        args: ["--output-dir", safeOutputDir, "--mscore", safeMscore, "--scores", safeScores],
       });
     } finally {
       if (stopProgress) await stopProgress();
@@ -947,8 +967,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     const currentDir = joinPath(workdir, "current");
     const outputDir = joinPath(workdir, "diff");
     const script = joinPath(vtestsDir, SCRIPT_COMPARE);
+    if (platform === "windows" && hasUnsafeShellChars(workdir)) {
+      const msg = `working directory path has spaces or special characters that may cause problems with vtest scripts on Windows: ${workdir}`;
+      term.write(`\x1b[33mWarning: ${msg}\x1b[0m\r\n`);
+      logEvent(`warning: ${msg}`);
+    }
     term.write(`${script} --reference-dir ${refDir} --current-dir ${currentDir} --output-dir ${outputDir}\r\n\n`);
     await invoke("prepare_output_dir", { workdir, subdir: "diff" });
+    // Resolve symlinks for any paths that contain spaces or shell-special
+    // characters — vtest scripts may use argv values unquoted internally.
+    const [safeRefDir, safeCurrentDir, safeOutputDir] = await Promise.all([
+      invoke("make_safe_path", { path: refDir }),
+      invoke("make_safe_path", { path: currentDir }),
+      invoke("make_safe_path", { path: outputDir }),
+    ]);
     // vtest-compare-pngs.sh exits 1 when diffs are found — that isn't a
     // failure, so replace the generic [process exited] with our own status
     // interpreted from (exit code, report presence).
@@ -964,7 +996,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     try {
       code = await invoke("run_command", {
         program: script,
-        args: ["--reference-dir", refDir, "--current-dir", currentDir, "--output-dir", outputDir],
+        args: ["--reference-dir", safeRefDir, "--current-dir", safeCurrentDir, "--output-dir", safeOutputDir],
       });
     } finally {
       if (stopProgress) await stopProgress();
