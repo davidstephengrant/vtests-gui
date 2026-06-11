@@ -5,6 +5,9 @@ use std::process::Stdio;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static LINK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tauri::command]
 fn path_exists(path: &str) -> bool {
@@ -299,6 +302,52 @@ fn rename_testfiles(renames: Vec<TestfileRename>) -> Vec<RenameResult> {
             }
         })
         .collect()
+}
+
+fn needs_safe_path(path: &str) -> bool {
+    path.chars().any(|c| c.is_ascii_whitespace() || matches!(c,
+        '(' | ')' | '[' | ']' | '{' | '}' | '!' | '#' | '$' | '&' |
+        '*' | '?' | ';' | '<' | '>' | '|' | '~' | '\'' | '"' | '`' | '\\'
+    ))
+}
+
+// On Unix, create a symlink in the OS temp dir so the returned path has no
+// shell-special characters. vtest scripts may use argv values unquoted
+// internally; symlinks let us pass a clean path without modifying the scripts.
+// On non-Unix the original path is returned unchanged.
+#[tauri::command]
+fn make_safe_path(path: String) -> Result<String, String> {
+    if !needs_safe_path(&path) {
+        return Ok(path);
+    }
+    make_safe_path_inner(path)
+}
+
+#[cfg(unix)]
+fn make_safe_path_inner(path: String) -> Result<String, String> {
+    let base = std::env::temp_dir().join("vtests-gui-links");
+    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str());
+    let pid = std::process::id();
+    let n = LINK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let link_name = match ext {
+        Some(e) => format!("vtlink-{}-{}.{}", pid, n, e),
+        None => format!("vtlink-{}-{}", pid, n),
+    };
+    let link_path = base.join(&link_name);
+    if link_path.exists() || link_path.is_symlink() {
+        std::fs::remove_file(&link_path).ok();
+    }
+    std::os::unix::fs::symlink(&path, &link_path)
+        .map_err(|e| format!("failed to create safe path symlink: {}", e))?;
+    Ok(link_path.to_string_lossy().into_owned())
+}
+
+#[cfg(not(unix))]
+fn make_safe_path_inner(path: String) -> Result<String, String> {
+    Ok(path)
 }
 
 #[tauri::command]
@@ -788,7 +837,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
+        .invoke_handler(tauri::generate_handler![path_exists, platform, command_exists, open_path, set_executable, make_safe_path, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
