@@ -20,6 +20,11 @@ fn path_exists(path: &str) -> bool {
 }
 
 #[tauri::command]
+fn get_home_dir() -> Option<String> {
+    home_dir().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn platform() -> &'static str {
     if cfg!(target_os = "windows") { "windows" }
     else if cfg!(target_os = "macos") { "macos" }
@@ -121,31 +126,6 @@ fn make_unique(name: &str, taken: &std::collections::HashSet<String>) -> String 
     }
 }
 
-fn collect_files(
-    dir: &std::path::Path,
-    by_parent: &mut std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
-) -> std::io::Result<()> {
-    let mut files_here = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        // Skip symlinks so a loop or out-of-tree link can't fool the walker.
-        let ft = entry.file_type()?;
-        if ft.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        if ft.is_dir() {
-            collect_files(&path, by_parent)?;
-        } else if ft.is_file() {
-            files_here.push(path);
-        }
-    }
-    if !files_here.is_empty() {
-        by_parent.insert(dir.to_path_buf(), files_here);
-    }
-    Ok(())
-}
-
 #[tauri::command]
 fn scan_testfile_names(dir: &str) -> Result<Vec<TestfileRename>, String> {
     let root = std::path::Path::new(dir);
@@ -153,49 +133,41 @@ fn scan_testfile_names(dir: &str) -> Result<Vec<TestfileRename>, String> {
         return Err(format!("not a directory: {}", dir));
     }
 
-    let mut by_parent: std::collections::HashMap<
-        std::path::PathBuf,
-        Vec<std::path::PathBuf>,
-    > = std::collections::HashMap::new();
-    collect_files(root, &mut by_parent).map_err(|e| e.to_string())?;
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(root)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+        .map(|e| e.path())
+        .collect();
+    // Sort so the same dir always yields the same suffix assignment.
+    files.sort();
+
+    // Seed `taken` with names we're NOT renaming (i.e. already valid),
+    // so suffixing can't collide with a file we're leaving alone.
+    let mut taken: std::collections::HashSet<String> = files
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+        .filter(|n| is_valid_basename(n))
+        .map(String::from)
+        .collect();
 
     let mut renames: Vec<TestfileRename> = Vec::new();
-    for (parent, files) in &by_parent {
-        // Seed `taken` with names we're NOT renaming (i.e. already valid),
-        // so suffixing can't collide with a file we're leaving alone.
-        let mut taken: std::collections::HashSet<String> = files
-            .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-            .filter(|n| is_valid_basename(n))
-            .map(String::from)
-            .collect();
-
-        let mut invalid: Vec<&std::path::PathBuf> = files
-            .iter()
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| !is_valid_basename(n))
-            })
-            .collect();
-        // Sort so the same dir always yields the same suffix assignment.
-        invalid.sort();
-
-        for file in invalid {
-            let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            let sanitized = sanitize_basename(name);
-            let unique = make_unique(&sanitized, &taken);
-            taken.insert(unique.clone());
-            let to = parent.join(&unique);
-            renames.push(TestfileRename {
-                from: file.to_string_lossy().into_owned(),
-                to: to.to_string_lossy().into_owned(),
-            });
-        }
+    for file in files.iter().filter(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| !is_valid_basename(n))
+    }) {
+        let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let sanitized = sanitize_basename(name);
+        let unique = make_unique(&sanitized, &taken);
+        taken.insert(unique.clone());
+        renames.push(TestfileRename {
+            from: file.to_string_lossy().into_owned(),
+            to: root.join(&unique).to_string_lossy().into_owned(),
+        });
     }
-    renames.sort_by(|a, b| a.from.cmp(&b.from));
     Ok(renames)
 }
 
@@ -859,7 +831,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![build_id, path_exists, platform, command_exists, open_path, set_executable, make_safe_path, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
+        .invoke_handler(tauri::generate_handler![build_id, path_exists, get_home_dir, platform, command_exists, open_path, set_executable, make_safe_path, prepare_output_dir, run_command, cancel_command, scan_testfile_names, rename_testfiles, count_scores, list_processed_scores, count_pngs, init_session_log, log_event, get_log_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

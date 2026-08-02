@@ -58,6 +58,11 @@ function basename(filePath) {
   return filePath.replace(/.*[\\/]/, "");
 }
 
+function dirname(filePath) {
+  const dir = filePath.replace(/[\\/][^\\/]*$/, "");
+  return dir === filePath ? "" : dir;
+}
+
 function hasUnsafeShellChars(path) {
   return /[ \t()\[\]{}'"`\\!#$&*?;<>|~]/.test(path);
 }
@@ -217,7 +222,7 @@ async function validateStoredPath(key) {
   return value;
 }
 
-function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term) {
+function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term, homeDirPath) {
   const zone = document.getElementById(zoneId);
   const fileNameEl = document.getElementById(fileNameId);
   let filePath = initialPath;
@@ -254,7 +259,17 @@ function setupDropZone(zoneId, fileNameId, storeKey, initialPath, btnReset, term
   }
 
   zone.addEventListener("click", async () => {
-    const selected = await open({ multiple: false, filters: [getPlatformFileFilter()] });
+    let defaultPath = homeDirPath;
+    if (filePath) {
+      if (await invoke("path_exists", { path: filePath })) {
+        defaultPath = dirname(filePath) || homeDirPath;
+      } else {
+        clear();
+        updateResetButton(btnReset);
+        updateActionButtons();
+      }
+    }
+    const selected = await open({ multiple: false, filters: [getPlatformFileFilter()], defaultPath });
     if (selected) await setPath(selected);
   });
 
@@ -702,16 +717,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   const btnReset = document.getElementById("btn-reset");
 
-  const [refPath, curPath, workdir, vtests, testfiles] = await Promise.all([
+  const [refPath, curPath, workdir, vtests, testfiles, homeDirPath] = await Promise.all([
     validateStoredPath(STORE_KEY_REFERENCE),
     validateStoredPath(STORE_KEY_CURRENT),
     validateStoredPath(STORE_KEY_WORKDIR),
     validateStoredPath(STORE_KEY_VTESTS),
     validateStoredPath(STORE_KEY_TESTFILES),
+    invoke("get_home_dir"),
   ]);
 
-  const refZone = setupDropZone("drop-reference", "file-reference", STORE_KEY_REFERENCE, refPath, btnReset, term);
-  const curZone = setupDropZone("drop-current", "file-current", STORE_KEY_CURRENT, curPath, btnReset, term);
+  const refZone = setupDropZone("drop-reference", "file-reference", STORE_KEY_REFERENCE, refPath, btnReset, term, homeDirPath);
+  const curZone = setupDropZone("drop-current", "file-current", STORE_KEY_CURRENT, curPath, btnReset, term, homeDirPath);
   setupDragDrop([refZone, curZone]);
 
   updateResetButton(btnReset);
@@ -722,7 +738,21 @@ window.addEventListener("DOMContentLoaded", async () => {
     syncDirButton(btn, !!initialValue);
     if (initialValue) onSet?.(initialValue);
     btn.addEventListener("click", async () => {
-      const selected = await open({ directory: true, multiple: false });
+      const current = localStorage.getItem(storeKey);
+      let defaultPath = homeDirPath;
+      if (current) {
+        if (await invoke("path_exists", { path: current })) {
+          defaultPath = current;
+        } else {
+          setPathEl(pathEl, null);
+          syncDirButton(btn, false);
+          localStorage.removeItem(storeKey);
+          logEvent(`${LABEL_BY_STORE_KEY[storeKey] ?? storeKey}: cleared`);
+          updateResetButton(btnReset);
+          updateActionButtons();
+        }
+      }
+      const selected = await open({ directory: true, multiple: false, defaultPath });
       if (!selected) return;
       setPathEl(pathEl, selected);
       syncDirButton(btn, true);

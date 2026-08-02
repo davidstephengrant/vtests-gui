@@ -5,7 +5,8 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build": "npm run tauri -- build && node scripts/rename-bundles.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
