@@ -39,6 +39,7 @@ const LABEL_BY_STORE_KEY = {
   "workdir": "working directory",
   "vtests-dir": "vtest directory",
   "testfiles-dir": "test scores directory",
+  "testfiles-dir-current": "current build test scores directory",
 };
 
 const STORE_KEY_REFERENCE = "files-reference";
@@ -46,6 +47,8 @@ const STORE_KEY_CURRENT = "files-current";
 const STORE_KEY_WORKDIR = "workdir";
 const STORE_KEY_VTESTS = "vtests-dir";
 const STORE_KEY_TESTFILES = "testfiles-dir";
+const STORE_KEY_TESTFILES_CURRENT = "testfiles-dir-current";
+const STORE_KEY_SEPARATE_SCORES = "separate-score-dirs";
 const STORE_KEY_OPEN_BROWSER = "open-browser-after-compare";
 const STORE_KEY_COMPARE_AFTER = "compare-after-generate";
 const STORE_KEY_ACTION = "generate-action";
@@ -87,13 +90,37 @@ function isAllowedExecutable(filePath) {
   return extensions.some((ext) => filePath.toLowerCase().endsWith("." + ext.toLowerCase()));
 }
 
+// Off by default: both builds render from the one shared scores directory,
+// which is what the app did before the option existed.
+function separateScores() {
+  return localStorage.getItem(STORE_KEY_SEPARATE_SCORES) === "true";
+}
+
+// The scores directory a given build renders from. With the option off, the
+// shared directory feeds both — only the current build can diverge.
+function scoresDirFor(which) {
+  if (which === "current" && separateScores())
+    return localStorage.getItem(STORE_KEY_TESTFILES_CURRENT);
+  return localStorage.getItem(STORE_KEY_TESTFILES);
+}
+
+// How to name a scores directory in terminal messages. There's only something
+// to disambiguate when the two builds can point at different directories.
+function scoresDirLabel(which) {
+  if (!separateScores()) return "test scores directory";
+  return which === "current"
+    ? "current build test scores directory"
+    : "reference build test scores directory";
+}
+
 function hasAnyData() {
   return (
     !!localStorage.getItem(STORE_KEY_REFERENCE) ||
     !!localStorage.getItem(STORE_KEY_CURRENT) ||
     !!localStorage.getItem(STORE_KEY_WORKDIR) ||
     !!localStorage.getItem(STORE_KEY_VTESTS) ||
-    !!localStorage.getItem(STORE_KEY_TESTFILES)
+    !!localStorage.getItem(STORE_KEY_TESTFILES) ||
+    !!localStorage.getItem(STORE_KEY_TESTFILES_CURRENT)
   );
 }
 
@@ -111,14 +138,16 @@ async function updateActionButtons() {
 
   const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
   const vtestsDirValid = !document.getElementById("vtests-path").classList.contains("path-invalid");
+  // Scores directories are per-build, so they gate the generate actions
+  // individually rather than being part of the shared dirsSet check.
   const dirsSet =
     !!workdir &&
     !!localStorage.getItem(STORE_KEY_VTESTS) &&
-    !!localStorage.getItem(STORE_KEY_TESTFILES) &&
     vtestsDirValid;
-  const hasReference = !!localStorage.getItem(STORE_KEY_REFERENCE);
-  const hasCurrent = !!localStorage.getItem(STORE_KEY_CURRENT);
-  const hasBoth = hasReference && hasCurrent;
+  // A build is generatable once it has both an executable and a scores
+  // directory to render from.
+  const canGenReference = !!localStorage.getItem(STORE_KEY_REFERENCE) && !!scoresDirFor("reference");
+  const canGenCurrent = !!localStorage.getItem(STORE_KEY_CURRENT) && !!scoresDirFor("current");
 
   let canCompare = false;
   if (dirsSet) {
@@ -134,9 +163,9 @@ async function updateActionButtons() {
   if (myGen !== updateActionButtonsGen) return;
 
   const canRun = {
-    "gen-reference": dirsSet && hasReference,
-    "gen-current": dirsSet && hasCurrent,
-    "gen-all": dirsSet && hasBoth,
+    "gen-reference": dirsSet && canGenReference,
+    "gen-current": dirsSet && canGenCurrent,
+    "gen-all": dirsSet && canGenReference && canGenCurrent,
   };
   for (const item of document.querySelectorAll("#split-generate-menu .split-menu-item")) {
     item.disabled = !canRun[item.dataset.action];
@@ -147,6 +176,8 @@ async function updateActionButtons() {
   document.getElementById("btn-open-browser").disabled = !hasDiffReport;
   document.getElementById("btn-open-workdir").disabled = !workdir;
   document.getElementById("btn-validate-testfiles").disabled = !localStorage.getItem(STORE_KEY_TESTFILES);
+  document.getElementById("btn-validate-testfiles-current").disabled =
+    !localStorage.getItem(STORE_KEY_TESTFILES_CURRENT);
 }
 
 function showProgress(label, total) {
@@ -186,12 +217,16 @@ function disableAllButtons() {
     btn.disabled = true;
   });
   document.getElementById("btn-cancel").disabled = false;
+  // Not a button, so the query above misses it. Toggling mid-run would change
+  // which directory a not-yet-started step of "Generate all" renders from.
+  document.getElementById("chk-separate-scores").disabled = true;
 }
 
 async function reenableAllButtons() {
   document.getElementById("btn-cancel").disabled = true;
   hideProgress();
-  for (const id of ["btn-workdir", "btn-vtests", "btn-testfiles", "split-generate-toggle"])
+  document.getElementById("chk-separate-scores").disabled = false;
+  for (const id of ["btn-workdir", "btn-vtests", "btn-testfiles", "btn-testfiles-current", "split-generate-toggle"])
     document.getElementById(id).disabled = false;
   updateResetButton(document.getElementById("btn-reset"));
   await updateActionButtons();
@@ -453,7 +488,8 @@ function initTerminal() {
 const INFO_TEXT = {
   workdir:   "The working directory is where vtests writes its output files during a test run.\n\nExisting contents may be permanently deleted at the start of each run.",
   vtests:    "The directory containing the vtest scripts (typically the vtest folder inside a MuseScore repository clone, e.g. MuseScore/vtest).",
-  testfiles: "The directory containing the MuseScore Studio test scores that vtests uses when generating and comparing results.",
+  testfiles: "The directory containing the MuseScore Studio test scores that vtests uses when generating and comparing results.\n\nWith \"Separate test scores per build\" ticked, this directory is used for the reference build only.",
+  testfilesCurrent: "The directory of test scores to render with the current build.\n\nUseful when the two builds need different score sets — for example scores saved in a format the reference build is too old to open.\n\nOnly scores rendered by both builds can be diffed; anything rendered by just one is reported and left out of the comparison.",
 };
 
 async function validateVtestsDir(dirPath, pathEl, term) {
@@ -484,21 +520,21 @@ async function validateVtestsDir(dirPath, pathEl, term) {
   updateActionButtons();
 }
 
-async function checkTestfileNames(dir, term) {
+async function checkTestfileNames(dir, term, label) {
   try {
     const renames = await invoke("scan_testfile_names", { dir });
     if (renames.length === 0) return;
     const n = renames.length;
     const warnMsg =
       `${n} file${n === 1 ? " has" : "s have"} invalid ` +
-      `name${n === 1 ? "" : "s"} in the test scores directory — vtest scripts ` +
+      `name${n === 1 ? "" : "s"} in the ${label} — vtest scripts ` +
       `may fail on these. Click "Validate filenames..." to review and rename.`;
     term.write(`\r\n\x1b[33mWarning: ${warnMsg}\x1b[0m\r\n`);
     logEvent(`warning: ${warnMsg}`);
   } catch (e) {
     const msg = e?.message ?? e;
-    term.write(`\r\n\x1b[31mError scanning test scores directory: ${msg}\x1b[0m\r\n`);
-    logEvent(`error: scanning test scores directory: ${msg}`);
+    term.write(`\r\n\x1b[31mError scanning ${label}: ${msg}\x1b[0m\r\n`);
+    logEvent(`error: scanning ${label}: ${msg}`);
   }
 }
 
@@ -514,8 +550,10 @@ async function preflightBash(term) {
   }
 }
 
+// One rename modal is shared by both scores-directory rows. Cancel/Confirm and
+// the dismiss handlers are wired once here; the returned `attach` hooks up a
+// single "Validate filenames..." button, so a second row can't double-fire them.
 function setupValidateTestfiles(term) {
-  const btnOpen = document.getElementById("btn-validate-testfiles");
   const modal = document.getElementById("validate-modal");
   const summary = document.getElementById("validate-summary");
   const list = document.getElementById("rename-list");
@@ -535,6 +573,10 @@ function setupValidateTestfiles(term) {
   }
 
   let currentRenames = [];
+  // Which row opened the modal — focus returns there on close, and its label
+  // names the directory in result messages.
+  let activeBtn = null;
+  let activeLabel = "test scores directory";
 
   function renderList(root, renames) {
     list.innerHTML = "";
@@ -559,8 +601,10 @@ function setupValidateTestfiles(term) {
     }
   }
 
-  function openModal(root, renames) {
+  function openModal(root, renames, btn, label) {
     currentRenames = renames;
+    activeBtn = btn;
+    activeLabel = label;
     const n = renames.length;
     summary.textContent =
       `${n} file${n === 1 ? "" : "s"} will be renamed. ` +
@@ -574,31 +618,9 @@ function setupValidateTestfiles(term) {
     modal.hidden = true;
     currentRenames = [];
     list.innerHTML = "";
-    btnOpen.focus();
+    activeBtn?.focus();
+    activeBtn = null;
   }
-
-  btnOpen.addEventListener("click", async () => {
-    logEvent("clicked: Validate filenames");
-    const root = localStorage.getItem(STORE_KEY_TESTFILES);
-    if (!root) return;
-    btnOpen.disabled = true;
-    try {
-      const renames = await invoke("scan_testfile_names", { dir: root });
-      if (renames.length === 0) {
-        term.write(`\r\n\x1b[32mAll filenames in the test scores directory are valid.\x1b[0m\r\n`);
-        logEvent("info: all filenames in the test scores directory are valid");
-        return;
-      }
-      logEvent(`validate filenames: ${renames.length} invalid`);
-      openModal(root, renames);
-    } catch (e) {
-      const msg = e?.message ?? e;
-      term.write(`\r\n\x1b[31mError scanning test scores directory: ${msg}\x1b[0m\r\n`);
-      logEvent(`error: scanning test scores directory: ${msg}`);
-    } finally {
-      updateActionButtons();
-    }
-  });
 
   btnCancel.addEventListener("click", () => {
     logEvent("clicked: Cancel (rename modal)");
@@ -613,8 +635,8 @@ function setupValidateTestfiles(term) {
       const results = await invoke("rename_testfiles", { renames: currentRenames });
       const failed = results.filter((r) => r.error);
       const ok = results.length - failed.length;
-      term.write(`\r\n\x1b[32mRenamed ${ok} file${ok === 1 ? "" : "s"}.\x1b[0m\r\n`);
-      logEvent(`info: renamed ${ok} file${ok === 1 ? "" : "s"}`);
+      term.write(`\r\n\x1b[32mRenamed ${ok} file${ok === 1 ? "" : "s"} in the ${activeLabel}.\x1b[0m\r\n`);
+      logEvent(`info: renamed ${ok} file${ok === 1 ? "" : "s"} in the ${activeLabel}`);
       for (const f of failed) {
         term.write(`\x1b[31m  failed: ${basename(f.from)} → ${basename(f.to)}: ${f.error}\x1b[0m\r\n`);
         logEvent(`error: rename failed: ${basename(f.from)} -> ${basename(f.to)}: ${f.error}`);
@@ -643,6 +665,33 @@ function setupValidateTestfiles(term) {
       closeModal();
     }
   });
+
+  return function attach({ btnId, storeKey, which }) {
+    const btnOpen = document.getElementById(btnId);
+    btnOpen.addEventListener("click", async () => {
+      const label = scoresDirLabel(which);
+      logEvent(`clicked: Validate filenames (${label})`);
+      const root = localStorage.getItem(storeKey);
+      if (!root) return;
+      btnOpen.disabled = true;
+      try {
+        const renames = await invoke("scan_testfile_names", { dir: root });
+        if (renames.length === 0) {
+          term.write(`\r\n\x1b[32mAll filenames in the ${label} are valid.\x1b[0m\r\n`);
+          logEvent(`info: all filenames in the ${label} are valid`);
+          return;
+        }
+        logEvent(`validate filenames (${label}): ${renames.length} invalid`);
+        openModal(root, renames, btnOpen, label);
+      } catch (e) {
+        const msg = e?.message ?? e;
+        term.write(`\r\n\x1b[31mError scanning ${label}: ${msg}\x1b[0m\r\n`);
+        logEvent(`error: scanning ${label}: ${msg}`);
+      } finally {
+        updateActionButtons();
+      }
+    });
+  };
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -717,12 +766,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   const btnReset = document.getElementById("btn-reset");
 
-  const [refPath, curPath, workdir, vtests, testfiles, homeDirPath] = await Promise.all([
+  const [refPath, curPath, workdir, vtests, testfiles, testfilesCurrent, homeDirPath] = await Promise.all([
     validateStoredPath(STORE_KEY_REFERENCE),
     validateStoredPath(STORE_KEY_CURRENT),
     validateStoredPath(STORE_KEY_WORKDIR),
     validateStoredPath(STORE_KEY_VTESTS),
     validateStoredPath(STORE_KEY_TESTFILES),
+    validateStoredPath(STORE_KEY_TESTFILES_CURRENT),
     invoke("get_home_dir"),
   ]);
 
@@ -791,7 +841,40 @@ window.addEventListener("DOMContentLoaded", async () => {
     pathEl: document.getElementById("testfiles-path"),
     storeKey: STORE_KEY_TESTFILES,
     initialValue: testfiles,
-    onSet: (selected) => checkTestfileNames(selected, term),
+    onSet: (selected) => checkTestfileNames(selected, term, scoresDirLabel("reference")),
+  });
+  const testfilesCurrentPicker = setupDirPicker({
+    btn: document.getElementById("btn-testfiles-current"),
+    pathEl: document.getElementById("testfiles-current-path"),
+    storeKey: STORE_KEY_TESTFILES_CURRENT,
+    initialValue: testfilesCurrent,
+    onSet: (selected) => {
+      // Also fires at startup for a stored path. With the option off that
+      // directory feeds nothing, so don't warn about names in it.
+      if (!separateScores()) return;
+      checkTestfileNames(selected, term, scoresDirLabel("current"));
+    },
+  });
+
+  const chkSeparateScores = document.getElementById("chk-separate-scores");
+  const rowTestfilesCurrent = document.getElementById("row-testfiles-current");
+  const testfilesLabel = document.getElementById("testfiles-label");
+
+  function syncSeparateScores() {
+    const on = chkSeparateScores.checked;
+    rowTestfilesCurrent.hidden = !on;
+    // Naming the first row after its build only makes sense once there are two.
+    testfilesLabel.textContent = on ? "Reference build scores:" : "Test scores directory:";
+  }
+
+  chkSeparateScores.checked = separateScores();
+  syncSeparateScores();
+  chkSeparateScores.addEventListener("change", () => {
+    localStorage.setItem(STORE_KEY_SEPARATE_SCORES, chkSeparateScores.checked);
+    syncSeparateScores();
+    logEvent(`'separate test scores per build': ${chkSeparateScores.checked ? "on" : "off"}`);
+    updateResetButton(btnReset);
+    updateActionButtons();
   });
 
   vtestsPathEl.addEventListener("mouseenter", () => {
@@ -817,10 +900,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     workdirPicker.clear();
     vtestsPicker.clear();
     testfilesPicker.clear();
+    testfilesCurrentPicker.clear();
     vtestsPathEl.classList.remove("path-invalid");
     delete vtestsPathEl.dataset.warning;
     document.getElementById("chk-compare-after").checked = true;
     document.getElementById("chk-open-browser").checked = true;
+    chkSeparateScores.checked = false;
+    syncSeparateScores();
     const splitMain = document.getElementById("split-generate-main");
     splitMain.textContent = "Generate all";
     splitMain.dataset.action = "gen-all";
@@ -927,15 +1013,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     return stop;
   }
 
-  async function runGenerate(outputSubdir, mscoreKey, label) {
+  async function runGenerate(outputSubdir, mscoreKey, which, label) {
     const vtestsDir = localStorage.getItem(STORE_KEY_VTESTS);
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
     const outputDir = joinPath(workdir, outputSubdir);
     const mscore = localStorage.getItem(mscoreKey);
-    const scores = localStorage.getItem(STORE_KEY_TESTFILES);
+    const scores = scoresDirFor(which);
     const script = joinPath(vtestsDir, SCRIPT_GENERATE);
     if (platform === "windows") {
-      for (const [fieldLabel, p] of [["output directory", outputDir], ["mscore executable", mscore], ["test scores directory", scores]]) {
+      for (const [fieldLabel, p] of [["output directory", outputDir], ["mscore executable", mscore], [scoresDirLabel(which), scores]]) {
         if (hasUnsafeShellChars(p)) {
           const msg = `${fieldLabel} path has spaces or special characters that may cause problems with vtest scripts on Windows: ${p}`;
           term.write(`\x1b[33mWarning: ${msg}\x1b[0m\r\n`);
@@ -971,8 +1057,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  const generateReference = () => runGenerate("ref", STORE_KEY_REFERENCE, "Generating reference PNGs");
-  const generateCurrent   = () => runGenerate("current", STORE_KEY_CURRENT, "Generating current PNGs");
+  const generateReference = () => runGenerate("ref", STORE_KEY_REFERENCE, "reference", "Generating reference PNGs");
+  const generateCurrent   = () => runGenerate("current", STORE_KEY_CURRENT, "current", "Generating current PNGs");
 
   // vtest-compare-pngs.sh prints one `Equal:` or `Different:` line per file
   // it compares, so we can count those off stdout without hitting the
@@ -998,6 +1084,39 @@ window.addEventListener("DOMContentLoaded", async () => {
     return async () => { await unlisten(); };
   }
 
+  // vtest-compare-pngs.sh only diffs stems present in both render sets, so a
+  // score rendered by just one build drops out of the report with no mention.
+  // Easy to hit once the builds can render from different score directories —
+  // and easy to misread the shorter report as "no diffs there".
+  async function warnOnRenderMismatch(refDir, currentDir) {
+    let refStems, curStems;
+    try {
+      [refStems, curStems] = await Promise.all([
+        invoke("list_processed_scores", { dir: refDir }),
+        invoke("list_processed_scores", { dir: currentDir }),
+      ]);
+    } catch (_) {
+      return; // Advisory only — never block a compare on this.
+    }
+    const refSet = new Set(refStems);
+    const curSet = new Set(curStems);
+    const onlyRef = refStems.filter((s) => !curSet.has(s));
+    const onlyCur = curStems.filter((s) => !refSet.has(s));
+    const n = onlyRef.length + onlyCur.length;
+    if (n === 0) return;
+    const headline =
+      `${n} score${n === 1 ? " was" : "s were"} rendered by only one build — ` +
+      `${n === 1 ? "it" : "they"} will not appear in the diff report:`;
+    term.write(`\x1b[33mWarning: ${headline}\x1b[0m\r\n`);
+    logEvent(`warning: ${headline}`);
+    for (const [heading, stems] of [["only in ref", onlyRef], ["only in current", onlyCur]]) {
+      if (stems.length === 0) continue;
+      term.write(`\x1b[33m  ${heading}: ${stems.join(", ")}\x1b[0m\r\n`);
+      logEvent(`warning:   ${heading}: ${stems.join(", ")}`);
+    }
+    term.write("\r\n");
+  }
+
   async function compare() {
     const vtestsDir = localStorage.getItem(STORE_KEY_VTESTS);
     const workdir = localStorage.getItem(STORE_KEY_WORKDIR);
@@ -1010,6 +1129,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       term.write(`\x1b[33mWarning: ${msg}\x1b[0m\r\n`);
       logEvent(`warning: ${msg}`);
     }
+    await warnOnRenderMismatch(refDir, currentDir);
     term.write(`${script} --reference-dir ${refDir} --current-dir ${currentDir} --output-dir ${outputDir}\r\n\n`);
     await invoke("prepare_output_dir", { workdir, subdir: "diff" });
     // Resolve symlinks for any paths that contain spaces or shell-special
@@ -1089,7 +1209,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (dir) await invoke("open_path", { path: dir });
   });
 
-  setupValidateTestfiles(term);
+  const attachValidateTestfiles = setupValidateTestfiles(term);
+  attachValidateTestfiles({ btnId: "btn-validate-testfiles", storeKey: STORE_KEY_TESTFILES, which: "reference" });
+  attachValidateTestfiles({ btnId: "btn-validate-testfiles-current", storeKey: STORE_KEY_TESTFILES_CURRENT, which: "current" });
 
   // ---- Generate split-button ----
   const splitRoot = document.getElementById("split-button-generate");

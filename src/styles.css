@@ -20,6 +20,7 @@
   --bg-button-active: #e8e8e8;
 
   --border-neutral: #aaa;
+  --border-divider: rgba(0, 0, 0, 0.12);
   --fg-hint: #888;
   --bg-filename: rgba(0, 0, 0, 0.04);
   --bg-terminal: #f0f0f0;
@@ -80,6 +81,7 @@
   --bg-button-active: #0f0f0f69;
 
   --border-neutral: #666;
+  --border-divider: rgba(255, 255, 255, 0.15);
   --fg-hint: #aaa;
   --bg-filename: rgba(255, 255, 255, 0.06);
   --bg-terminal: #1a1a1a;
@@ -294,6 +296,28 @@ button:focus-visible {
 
 .workdir-table td:last-child button {
   min-width: 7.5em;
+}
+
+/* The toggle spans the whole row, so it matches both td:first-child and
+   td:last-child above — undo the 1% width and right-alignment those impose. */
+.workdir-table td.scores-toggle-cell {
+  width: auto;
+  text-align: left;
+  white-space: normal;
+}
+
+/* Divides the test-scores group — the build rows plus the toggle beneath them —
+   from the vtest directory row above. */
+.workdir-table tr.scores-group-start td {
+  border-top: 1px solid var(--border-divider);
+  padding-top: 0.7rem;
+}
+
+/* Breathing room above the divider. Set as padding on the preceding row rather
+   than a border on this one, because border-collapse would pick the wider of
+   the two borders and hide the divider itself. */
+.workdir-table tr:has(+ tr.scores-group-start) td {
+  padding-bottom: 0.7rem;
 }
 
 .workdir-label {
