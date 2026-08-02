@@ -89,15 +89,34 @@
               <td id="vtests-path" class="workdir-path"></td>
               <td><button id="btn-vtests">Change...</button></td>
             </tr>
-            <tr>
+            <tr class="scores-group-start">
               <td><button class="btn-info" data-info="testfiles" aria-label="Help: test scores directory">?</button></td>
-              <td class="workdir-label">Test scores directory:</td>
+              <td class="workdir-label" id="testfiles-label">Test scores directory:</td>
               <td id="testfiles-path" class="workdir-path"></td>
               <td>
                 <div class="btn-group">
                   <button id="btn-validate-testfiles" class="btn-danger" disabled>Validate filenames...</button>
                   <button id="btn-testfiles">Change...</button>
                 </div>
+              </td>
+            </tr>
+            <tr id="row-testfiles-current" hidden>
+              <td><button class="btn-info" data-info="testfilesCurrent" aria-label="Help: current build test scores directory">?</button></td>
+              <td class="workdir-label">Current build scores:</td>
+              <td id="testfiles-current-path" class="workdir-path"></td>
+              <td>
+                <div class="btn-group">
+                  <button id="btn-validate-testfiles-current" class="btn-danger" disabled>Validate filenames...</button>
+                  <button id="btn-testfiles-current">Change...</button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="4" class="scores-toggle-cell">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="chk-separate-scores" />
+                  Separate test scores per build
+                </label>
               </td>
             </tr>
           </table>

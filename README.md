@@ -14,6 +14,7 @@ Developed with the assistance of [Claude Code](https://claude.com/claude-code), 
 
 - Pick two MuseScore Studio builds (reference and current) via drag-and-drop or file picker
 - Generate PNG renders for either build, or both in sequence
+- Render both builds from one shared folder of test scores, or give each build its own
 - Compare the two render sets and open the resulting HTML diff report in the browser
 - Detect and batch-rename test score filenames that could trip up the vtest scripts
 - Cross-platform: Linux (AppImage), macOS (.app), Windows (.exe)
@@ -64,7 +65,7 @@ Installers and binaries are written to `src-tauri/target/release/bundle/`.
 2. **Set the three directories:**
    - *Working directory* — where the app writes `ref/`, `current/`, and `diff/` subdirectories. **Existing contents may be deleted at the start of each run.**
    - *vtest directory* — the `vtest/` folder inside your MuseScore Studio repository clone.
-   - *Test scores directory* — the folder containing the `.mscz` / `.mscx` files to render.
+   - *Test scores directory* — the folder containing the `.mscz` / `.mscx` files to render. Tick **Separate test scores per build** to give each build its own folder — see [Separate test scores per build](#separate-test-scores-per-build).
 3. **Generate and compare:**
    - *Generate reference* / *Generate current* — render one build's PNGs.
    - *Generate all* — render both in sequence.
@@ -77,11 +78,29 @@ Rendering changes accumulate over time, so the most useful comparisons are betwe
 
 Note also that each MuseScore Studio build can only render score files saved in its own format or older. Scores saved in a newer version than the binary supports will be silently skipped and won't appear in the diff.
 
+### Separate test scores per build
+
+By default both builds render the same folder of scores. Ticking **Separate test scores per build** splits the row in two — *Reference build* and *Current build* — so each build renders from its own folder.
+
+This is mainly useful when the two builds can't read the same files. Since a build silently skips scores saved in a newer version than it supports, pairing an older reference build with a folder of scores it can actually open — while the current build renders the newer ones — gets both sides rendering instead of leaving gaps in the reference set.
+
+Each folder gets its own **Validate filenames...** button and its own startup filename scan.
+
+Only scores rendered by *both* builds can be diffed: `vtest-compare-pngs.sh` pairs PNGs by name, so anything rendered by just one build is left out of the report. Before each comparison the app lists those non-overlapping scores in the terminal, so a shorter report isn't mistaken for a clean one:
+
+```
+Warning: 3 scores were rendered by only one build — they will not appear in the diff report:
+  only in ref: old-tuplet-layout
+  only in current: new-parenthesis, new-tie-shape
+```
+
+Unticking the checkbox restores the single shared folder; the current build's folder is remembered in case you tick it again.
+
 ### Test score filenames
 
 The vtest scripts are fairly strict about what they'll accept as a filename. Spaces, parentheses, `#`, `&`, non-ASCII characters and the like can cause the shell pipelines inside `vtest-generate-pngs.sh` / `vtest-compare-pngs.sh` to misquote paths, skip files silently, or fail outright. In practice, anything outside `A–Z`, `a–z`, `0–9`, `.`, `_`, and `-` is best avoided.
 
-Whenever the *Test scores directory* is loaded (at startup or via *Change...*), the app scans it recursively and prints a warning in the terminal if any file has an invalid name. Click **Validate filenames...** next to the directory to open a preview showing each offending file and its proposed replacement — runs of invalid characters are collapsed into a single `_`, and name collisions are resolved by appending `_1`, `_2`, … before the extension so nothing gets overwritten. Confirm to apply the renames; cancel to back out.
+Whenever a test scores directory is loaded (at startup or via *Change...*), the app scans its top level — matching what the vtest scripts themselves read — and prints a warning in the terminal if any file has an invalid name. Click **Validate filenames...** next to the directory to open a preview showing each offending file and its proposed replacement — runs of invalid characters are collapsed into a single `_`, and name collisions are resolved by appending `_1`, `_2`, … before the extension so nothing gets overwritten. Confirm to apply the renames; cancel to back out.
 
 ### Session logs
 
